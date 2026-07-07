@@ -1435,11 +1435,11 @@ async function fillWhoHowMPage(prepared, selectors, delayMs, searchWaitMs) {
     await sleep(delayMs);
   }
 
-  // של"מ budgets have an extra "תכנית" dropdown that must be set to a fixed value
+  // של"מ budgets have an extra "בחירת אוכלוסיה" dropdown that must be set to a fixed value
   // (prepared.shalamProgram, empty for every other budget - see pipeline buildRow).
   if (s.shalamProgram && prepared.shalamProgram) {
     const ok = await fillFormTitanDropdown(s.shalamProgram, [prepared.shalamProgram]);
-    results.push({ field: 'shalamProgram', ok, label: 'תכנית של"מ', value: prepared.shalamProgram });
+    results.push({ field: 'shalamProgram', ok, label: 'בחירת אוכלוסיה', value: prepared.shalamProgram });
     await sleep(delayMs);
   }
 

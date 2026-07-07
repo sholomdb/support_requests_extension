@@ -288,7 +288,7 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     if (catPrice != null) fields.itemMaxPrice = catPrice;
   }
 
-  // של"מ budgets need the fixed "תכנית" dropdown on WhoHowM; other budgets leave it empty.
+  // של"מ budgets need the fixed "בחירת אוכלוסיה" dropdown on WhoHowM; others leave it empty.
   fields.shalamProgram =
     Number(fields.budgetLabelIndex) === SHALAM_LABEL_INDEX ? CONSTANTS.shalamProgram : '';
 
