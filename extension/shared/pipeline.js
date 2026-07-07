@@ -357,8 +357,10 @@ export function allocateSources(builtRows, snapshot = {}) {
  * One row -> one or more fillable requests. Two-level split: the allocation (allocateSources)
  * gives ordered funded segments {source, amount} plus an out-of-budget remainder; each segment
  * is then split by the item's per-budget price cap (row.fields.itemMaxPrice) so no request
- * exceeds it. Every request draws from exactly one source (fields.budgetSourceSearch), or is
- * flagged out-of-budget (status OUT_OF_BUDGET, empty source so step 3 skips it).
+ * exceeds it. Every request draws from exactly one source (fields.budgetSourceSearch). An
+ * out-of-budget remainder is flagged (status OUT_OF_BUDGET, skipped by the batch fill) but
+ * still carries the first source in the row's list as its budgetSourceSearch, so an operator
+ * who deliberately runs "מלא בקשה" on it can complete the fill (knowingly overspending it).
  *
  * requestId is `${rowKey}::${source|'OOB'}:${segIdx}:${splitIdx}` - identity is pinned to
  * (row, source, price-split position), NOT list position, because the split is now
@@ -390,18 +392,25 @@ export function buildRequests(row, allocation) {
     chunks.push({ amount: nis(row.fields.amount), source: null, oob: false, segIdx: -1, k: 0 });
   }
 
-  return chunks.map((c, i) => ({
-    requestId: `${row.rowKey}::${c.oob ? OOB_SOURCE : c.source ?? 'NA'}:${c.segIdx}:${c.k}`,
-    rowKey: row.rowKey,
-    splitIndex: i,
-    splitCount: chunks.length,
-    fields: { ...row.fields, amount: String(c.amount), budgetSourceSearch: c.source || '' },
-    sourceLabel: c.source || null,
-    outOfBudget: c.oob,
-    status: c.oob ? ROW_STATUS.OUT_OF_BUDGET : row.status,
-    errors: row.errors,
-    steps: { 1: STEP_STATUS.PENDING, 2: STEP_STATUS.PENDING, 3: STEP_STATUS.PENDING },
-  }));
+  // An out-of-budget chunk has no allocated source; fall back to the first source in the
+  // row's priority list so a deliberate manual fill still has a source to submit.
+  const fallbackSource = row.fields.budgetSourceList?.[0] || '';
+
+  return chunks.map((c, i) => {
+    const source = c.oob ? fallbackSource : c.source || '';
+    return {
+      requestId: `${row.rowKey}::${c.oob ? OOB_SOURCE : c.source ?? 'NA'}:${c.segIdx}:${c.k}`,
+      rowKey: row.rowKey,
+      splitIndex: i,
+      splitCount: chunks.length,
+      fields: { ...row.fields, amount: String(c.amount), budgetSourceSearch: source },
+      sourceLabel: source || null,
+      outOfBudget: c.oob,
+      status: c.oob ? ROW_STATUS.OUT_OF_BUDGET : row.status,
+      errors: row.errors,
+      steps: { 1: STEP_STATUS.PENDING, 2: STEP_STATUS.PENDING, 3: STEP_STATUS.PENDING },
+    };
+  });
 }
 
 /**

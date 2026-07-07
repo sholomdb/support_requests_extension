@@ -295,7 +295,7 @@ describe('buildRequests (split by item price + budget-source allocation)', () =>
     assert.deepEqual(idsA, idsB);
   });
 
-  test('out-of-budget remainder becomes an OUT_OF_BUDGET request with no source', () => {
+  test('out-of-budget remainder is OUT_OF_BUDGET and falls back to the first source', () => {
     const raw = makeRawRow({ item: 'מקרר', amount: 400 });
     const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
     const requests = buildRequests(row, allocateSources([row], { [SRC]: 300 }));
@@ -306,7 +306,10 @@ describe('buildRequests (split by item price + budget-source allocation)', () =>
     assert.equal(funded[0].fields.budgetSourceSearch, SRC);
     assert.deepEqual(oob.map((r) => r.fields.amount), ['101']);
     assert.equal(oob[0].status, ROW_STATUS.OUT_OF_BUDGET);
-    assert.equal(oob[0].fields.budgetSourceSearch, '');
+    // No source could fund it, but it defaults to the first source in the list so a manual
+    // "מלא בקשה" can still complete.
+    assert.equal(oob[0].fields.budgetSourceSearch, SRC);
+    assert.equal(oob[0].sourceLabel, SRC);
   });
 });
 
