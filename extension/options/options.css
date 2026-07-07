@@ -157,3 +157,51 @@ input[type='number'] {
 .category-add input {
   flex: 1;
 }
+
+/* Budget-source priority list editor */
+.bs-block {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.bs-block h3 {
+  margin: 0 0 6px;
+}
+
+.source-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.source-list-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+}
+
+.source-list-item .source-name {
+  flex: 1;
+}
+
+.bs-status {
+  align-self: center;
+}
+
+/* Budget-source remaining balances */
+.balance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.balance-row .balance-name {
+  flex: 1;
+}
+
+.balance-row .balance-input {
+  width: 120px;
+}

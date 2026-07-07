@@ -66,6 +66,25 @@
   </section>
 
   <section class="card">
+    <h2>רשימות מקורות תקציב (לפי עדיפות)</h2>
+    <p class="hint">
+      לכל צירוף של סוג תקציב + עיר נשמרת רשימת מקורות תקציב מסודרת. המקור הראשון ינוצל
+      קודם, וכשייגמר המערכת תעבור לבא אחריו. אפשר להוסיף, להסיר ולשנות סדר, ואז "שמור רשימה".
+    </p>
+    <button class="btn" id="refreshBudgetSourcesBtn">רענן</button>
+    <div id="budgetSourceListsContainer"></div>
+  </section>
+
+  <section class="card">
+    <h2>יתרות מקורות תקציב</h2>
+    <p class="hint">
+      היתרות שנקראו מטבלת הסעיפים בדף הבית (או שעודכנו כאן ידנית). משמשות לחלוקת הסכומים
+      בין המקורות בעת טעינת קובץ. עדכון ערך נשמר מיד.
+    </p>
+    <div id="budgetBalancesContainer"></div>
+  </section>
+
+  <section class="card">
     <h2>מיפוי ערכים (Excel → אתר)</h2>
     <p class="hint">מיפויים נשמרים אוטומטית כשהמפעיל בוחר ערך, וניתן לערוך כאן.</p>
     <button class="btn" id="refreshMappingsBtn">רענן</button>
