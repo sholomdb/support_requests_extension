@@ -716,6 +716,17 @@ async function fillFormTitanDropdown(selector, preferredTexts) {
 }
 
 function isMuiLookupField(selector) {
+  // A field-scoped lookup widget/search button (whether rendered inline on the page or in a
+  // modal) marks this as a lookup field. Catches inline widgets like budgetSource (#e424),
+  // whose search box + "חיפוש" button aren't a FormField--lookup wrapper or aria-labelled.
+  const fieldId = fieldIdFromSelector(selector);
+  if (
+    fieldId &&
+    querySelectorDeep(`.ft--e${fieldId}--modal--fieldInput, button[class*="e${fieldId}--modal--search"]`)
+  ) {
+    return true;
+  }
+
   const parts = findMuiFieldInput(selector);
   if (!parts?.root) return false;
   const root =
@@ -830,67 +841,82 @@ function clickDialogButton(dialog, textFragments) {
   return false;
 }
 
-/** The lookup modal's search button is `<button class="...modal--search">חיפוש</button>`
- * - text is just "חיפוש" (not "לחצו לחיפוש"), so match it by its stable class first,
- * then fall back to the bare word. */
-function clickModalSearchButton(dialog) {
-  const btn = dialog.querySelector('button[class*="modal--search"], button[class*="lookupModal--search"]');
+/** The lookup search button is `<button class="...modal--search">חיפוש</button>` - text is
+ * just "חיפוש" (not "לחצו לחיפוש"), so match it by the field-specific class, then the shared
+ * class, then the bare word. `scope` may be the modal dialog or the document (inline widget). */
+function clickModalSearchButton(scope, fieldId) {
+  const root = scope && scope.querySelector ? scope : document;
+  const btn =
+    (fieldId && root.querySelector(`button[class*="e${fieldId}--modal--search"]`)) ||
+    root.querySelector('button[class*="modal--search"], button[class*="lookupModal--search"]');
   if (btn) {
     dispatchClick(btn);
     return true;
   }
-  return clickDialogButton(dialog, ['חיפוש']);
+  return clickDialogButton(root, ['חיפוש']);
 }
 
 async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
   const parts = findMuiFieldInput(selector);
-  if (!parts) return { ok: false, reason: 'element not found' };
-
-  const { root, input } = parts;
   const fieldId = fieldIdFromSelector(selector);
   const target = normalizeMatchText(searchText);
   if (!target) return { ok: false, reason: 'empty search text' };
 
-  if (textMatchesOption(input.value, searchText)) {
-    return { ok: true, value: input.value.trim(), matched: 'already set' };
+  if (parts?.input && textMatchesOption(parts.input.value, searchText)) {
+    return { ok: true, value: parts.input.value.trim(), matched: 'already set' };
   }
 
-  const lookupBtn = root.querySelector(
-    'button[aria-label*="lookup"], button[aria-label*="Lookup"], button[aria-label*="חיפוש"]'
-  );
-  if (!lookupBtn) return { ok: false, reason: 'lookup button not found' };
+  // The lookup search widget is either already rendered inline for this field (e.g.
+  // budgetSource) or behind a lookup button that opens a modal (e.g. supplier). Prefer a
+  // visible inline widget; otherwise click the lookup button and wait for the modal.
+  let searchInput = fieldId ? querySelectorDeep(`.ft--e${fieldId}--modal--fieldInput input`) : null;
+  let scope = null;
 
-  dispatchClick(lookupBtn);
-  await sleep(600);
-
-  let dialog = null;
-  for (let i = 0; i < 15; i++) {
-    dialog = findLookupDialog(fieldId);
-    if (dialog) break;
-    await sleep(200);
+  if (searchInput && isVisible(searchInput)) {
+    scope =
+      searchInput.closest('[role="dialog"]') ||
+      (fieldId && searchInput.closest(`[class*="e${fieldId}--modal"]`)) ||
+      searchInput.ownerDocument;
+  } else {
+    const lookupBtn = parts?.root?.querySelector(
+      'button[aria-label*="lookup"], button[aria-label*="Lookup"], button[aria-label*="חיפוש"]'
+    );
+    if (!lookupBtn) return { ok: false, reason: 'lookup trigger not found' };
+    dispatchClick(lookupBtn);
+    await sleep(600);
+    for (let i = 0; i < 15; i++) {
+      scope = findLookupDialog(fieldId);
+      if (scope) break;
+      await sleep(200);
+    }
+    if (!scope) return { ok: false, reason: 'lookup dialog not opened' };
+    searchInput = scope.querySelector(
+      'input[aria-label="search"], .ft--theme--lookupModal--fieldInput input, input[placeholder="חיפוש"], input[placeholder="Search"]'
+    );
   }
-  if (!dialog) return { ok: false, reason: 'lookup dialog not opened' };
 
-  const modalInput = dialog.querySelector(
-    'input[aria-label="search"], .ft--theme--lookupModal--fieldInput input, input[placeholder="חיפוש"], input[placeholder="Search"]'
-  );
-  if (modalInput) {
-    dispatchClick(modalInput);
-    modalInput.focus();
-    await typeIntoMuiInput(modalInput, searchText, true);
+  if (searchInput) {
+    dispatchClick(searchInput);
+    searchInput.focus();
+    await typeIntoMuiInput(searchInput, searchText, true);
     await sleep(300);
-    // Same submit-trigger set that fixed the catalog item search box: some builds
-    // filter on Enter, others need the search button clicked.
-    dispatchKey(modalInput, 'Enter', 13);
+    // Some builds filter on Enter, others need the search button clicked - do both.
+    dispatchKey(searchInput, 'Enter', 13);
     await sleep(150);
   }
 
-  clickModalSearchButton(dialog);
+  clickModalSearchButton(scope, fieldId);
   await sleep(waitMs);
 
-  const rows = dialog.querySelectorAll('.MuiTableBody-root .MuiTableRow-root, tbody tr');
+  // Results render in a table within the widget/modal scope; fall back to a document-wide
+  // scan if the scope is a narrow inline container.
+  const rowScope = scope && scope.querySelectorAll ? scope : document;
+  let rows = rowScope.querySelectorAll('.MuiTableBody-root .MuiTableRow-root, tbody tr');
+  if (!rows.length) rows = querySelectorAllDeep('.MuiTableBody-root .MuiTableRow-root, tbody tr');
+
   let matchedRow = null;
   for (const row of rows) {
+    if (!isVisible(row)) continue;
     const textCells = [...row.querySelectorAll('td')].map((td) => normalizeMatchText(td.textContent));
     const rowLabel = textCells.find((t) => t.length > 1 && t.length < 120) || '';
     if (
@@ -918,8 +944,10 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
   }
   await sleep(300);
 
-  const saved = clickDialogButton(dialog, ['שמירת', 'בחירה']);
-  if (!saved) clickDialogButton(dialog, ['שמירה']);
+  // Confirm the selection if the widget has a save/select button (inline widgets may not).
+  const confirmScope = matchedRow.closest('[role="dialog"]') || (scope?.querySelectorAll ? scope : document);
+  let saved = clickDialogButton(confirmScope, ['שמירת', 'בחירה']);
+  if (!saved) saved = clickDialogButton(confirmScope, ['שמירה']);
   await sleep(500);
 
   const actual = readFieldValue(selector);
