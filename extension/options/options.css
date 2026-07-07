@@ -1,0 +1,159 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+  background: #f4f6f8;
+  color: #1a1a2e;
+  direction: rtl;
+}
+
+h1 {
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+h3 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+  color: #444;
+}
+
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.hint {
+  color: #666;
+  font-size: 13px;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+input[type='text'],
+input[type='url'],
+input[type='number'] {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.city-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: end;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: #4a90d9;
+  color: #fff;
+  border-color: #4a90d9;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#saveStatus {
+  color: #27ae60;
+  font-size: 13px;
+}
+
+.mappings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+.mappings-table th,
+.mappings-table td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  text-align: right;
+}
+
+.mappings-table input.map-site-value {
+  width: 100%;
+  padding: 4px;
+  font-size: 12px;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.category-block {
+  margin-bottom: 16px;
+}
+
+.category-block h3 {
+  margin: 0 0 6px;
+}
+
+.category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.category-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #eef5fc;
+  border: 1px solid #cfe2f3;
+  border-radius: 14px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+}
+
+.category-chip button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #c0392b;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+
+.category-add {
+  display: flex;
+  gap: 6px;
+}
+
+.category-add input {
+  flex: 1;
+}

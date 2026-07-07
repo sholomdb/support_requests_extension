@@ -1,0 +1,44 @@
+it works, now for the rest:
+ID - should be taken from  תעודת זהות
+last name - should be taken from שם משפחה
+first name - should be taken from שם פרטי
+gender - drop list of זכר, נקבה: #e209 should be taken from מגדר
+sector - drop list of דרוזי, יהודי, מוסלמי, נוצרי, בדואי: #e210 should be taken from מגזר
+is there a file exists in the Ministry of Welfare - drop list of כן, לא: #e211 - the answer should always be כן
+maritalStatus - drop list of רווק/ה, נשוי/אה, אלמנ/ה, גרוש/ה, פרוד/ה, ידוע/ה בציבור: #e212 should be taken from מצב משפחתי
+num of people in household : #e213 should be taken from נפשות
+holocaust survivor - drop list of כן, לא :#e2848 should be taken from ניצול שואה
+country of birth - drop list of ישראל, אחר, אסיה, ארצות המערב, מזרח אירופה, ארצות ערב, אתיופיה, דרום אמריקה, חמ"ע FSU, אפריקה : #e216 should be infered from ארץ לידה
+birthDate (if the ID is in the system you can't change it): #e217 should be taken from תאריך לידה
+family classification - drop list of משפחה עם זוג הורים, משפחה עם הורה עצמאי  (חד הוריות), זוג ללא ילדים, בודד: #e218 - you should know which to choose based on "נפשות" and "מצב משפחתי"
+street: #e223 it should be taken from רחוב
+building: #e224 it should be taken from בנין
+city: it should match the search results - אלעד \ ביתר עילית \ בני ברק \ ועד יהודי חברון \ בית אל \ מודיעין עילית \ מטה בנימין so it is taken from שם הרשות #e229
+in the case of מטה בנימין there will be added another field to fill which is settlement which will be taken from ישוב: #e233
+phone: #e231 make sure it starts with 05 and of length 10 it should be taken from טלפון נייד if it's not starting with 05 and of length 10 you should fill it in another field which is "home phone" : #e232
+
+the next page button is #e238
+
+the next page URL is: https://ifcjil.formtitan.com/ftproject/ifcjaid/CATALOG
+in here you should choose the budget, it is a multi selection button #e687
+סיוע חירום למשפחות: label:nth-child(1)
+אזרחים ותיקים: label:nth-child(2)
+ניצולי שואה: label:nth-child(3)
+בתי משפט קהילתיים: label:nth-child(4)
+שלמ: label:nth-child(5)
+נפגעי אלימות במשפחה: label:nth-child(6)
+it should be based on סוג תקציב
+
+ones you choose the budget the catalog will appear and you can choose the item based on פריט
+
+each item has it's own selector so we should hold a map for each of them, I'll add them later.
+
+once you click the item you move to next page where you will fill the reason and amount and finalize the request
+URL page: https://ifcjil.formtitan.com/ftproject/ifcjaid/WhoHowM
+reason - should be taken from נימוקים לאישור: #e434
+budget source - it should match the search results: "סיוע חירום למשפחות תכנית סיוע חומרי בני ברק  2026" and there are more, I'll add them later, it should be based on the columns סוג תקציב and שם הרשות : #e424
+supplier - it should match the search results: this will always be "אש"ל חב"ד ירושלים"  #e304
+amount - should be taken from סכום סיוע בש"ח #e305
+the button that finalize the request is #e361
+
+we have a lot of cases where we need exact match (drop - lists / multi selection button / search / items) and the file might not contain the exacly what we need, so I want you to have maps for each of them that in case it won't know how to handle with one of them it will ask the operator what it should match and it will save it for later use and the operator would be able to change it later if he made a mistake

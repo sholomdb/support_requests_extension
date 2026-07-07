@@ -1,0 +1,8 @@
+{
+  "name": "assist-request-filler",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

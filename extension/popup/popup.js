@@ -1,0 +1,1180 @@
+import { parseExcelBuffer } from '../shared/excel-parser.js';
+import { loadSettings, findCityLoginId, SITE } from '../shared/config.js';
+import { getSession, saveSession, setStepStatus, isRequestDone } from '../shared/storage.js';
+import { formatCurrency } from '../shared/utils.js';
+import {
+  collectMappingQueue,
+  buildRow,
+  buildAllRequests,
+  mergeRowsOnReupload,
+  mergeRequestsOnReupload,
+  fileIdOf,
+  ROW_STATUS,
+  STEP_STATUS,
+} from '../shared/pipeline.js';
+import { saveMapping } from '../shared/mappings.js';
+
+let settings = null;
+let session = null;
+let currentStep = 1;
+let automationRunning = false;
+let stopRequested = false;
+let rowFilter = 'all';
+
+/** Row-list filter (also gates which requests the "מלא בקשות מהנוכחית" batch runs on). */
+function matchesFilter(request) {
+  switch (rowFilter) {
+    case 'undone':
+      return !isRequestDone(request);
+    case 'failed':
+      return [1, 2, 3].some((s) => request.steps[s] === STEP_STATUS.FAILED);
+    case 'needsfix':
+      return request.status !== ROW_STATUS.READY;
+    default:
+      return true;
+  }
+}
+let pendingMapping = null;
+let mappingQueue = [];
+let mappingResolveCallback = null;
+let lastWorkingFrameId = null;
+
+const STEP_PAGES = { 1: 'MUTAV', 2: 'CATALOG', 3: 'WhoHowM' };
+
+/** The page a stage must reach for it to count as passed:
+ *  MUTAV  --(#e238 next)-->  CATALOG
+ *  CATALOG --(item click)-->  WhoHowM   (no next/submit button on the site)
+ *  WhoHowM --(#e361 submit)-> home
+ * A stage is only marked "filled" once its fields succeeded AND the page actually
+ * changed to this expected page - so a failure at the last stage no longer shows a
+ * false 3/3 / green line. */
+const EXPECTED_NEXT_PAGE = { 1: 'catalog', 2: 'whohowm', 3: 'home' };
+const NEXT_PAGE_LABEL = { catalog: 'CATALOG', whohowm: 'WhoHowM', home: 'דף הבית' };
+// Informational results that don't, on their own, mean the stage's fields failed.
+const SOFT_FIELDS = new Set(['idLookupWait']);
+
+/** A stage's fields are OK only if every (non-informational) field result was
+ * filled or intentionally skipped (readonly). result.ok alone just means the fill
+ * ran, which is why it was marking failed stages as passed. */
+function allFieldsOk(result) {
+  if (!result?.ok) return false;
+  const rs = (result.results || []).filter((r) => !SOFT_FIELDS.has(r.field));
+  if (!rs.length) return false;
+  return rs.every((r) => r.ok || r.skipped);
+}
+
+/** Polls the page type until it becomes `expected` (the site navigated) or times out. */
+async function waitForPageChange(expected, timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const info = await getPageInfoForTab();
+    const page = info?.page && info.page !== 'unknown' ? info.page : pageFromTabUrl(info?.url);
+    if (page === expected) return true;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+/** Like waitForPageChange, but also bails the moment an error popup appears - the
+ * stage failed regardless of navigation. Returns { navigated } | { error } | { timeout }. */
+async function waitForStageOutcome(expected, timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const info = await getPageInfoForTab();
+    if (info?.errorPopup) return { error: info.errorPopup };
+    const page = info?.page && info.page !== 'unknown' ? info.page : pageFromTabUrl(info?.url);
+    if (page === expected) return { navigated: true };
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { timeout: true };
+}
+
+/** One-shot check for an error popup currently on the page. */
+async function currentErrorPopup() {
+  const info = await getPageInfoForTab();
+  return info?.errorPopup || null;
+}
+
+const $ = (id) => document.getElementById(id);
+
+async function init() {
+  settings = await loadSettings();
+  session = await getSession();
+
+  // Read straight from the manifest so it never drifts out of sync with the real version.
+  $('appVersion').textContent = `v${chrome.runtime.getManifest().version}`;
+
+  $('openOptions').addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.runtime.openOptionsPage();
+  });
+
+  $('fileInput').addEventListener('change', handleFileUpload);
+  $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
+  $('newRecordBtn').addEventListener('click', startNewRecord);
+  $('fillRequestBtn').addEventListener('click', () => runFillRequest());
+  $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
+  $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
+  $('markFailureBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FAILED));
+  $('prevRowBtn').addEventListener('click', () => navigateRow(-1));
+  $('nextRowBtn').addEventListener('click', () => navigateRow(1));
+  $('saveMappingBtn').addEventListener('click', saveMappingAndContinue);
+  $('cancelMappingBtn').addEventListener('click', skipMappingAndContinue);
+  $('fixMappingsBtn').addEventListener('click', fixMappings);
+  $('exportBtn').addEventListener('click', exportSessionFile);
+  $('rowFilter').addEventListener('change', (e) => {
+    rowFilter = e.target.value;
+    renderRowList();
+  });
+
+  // Each step button fills that step directly (merged "מלא שלב נוכחי" into the tabs).
+  document.querySelectorAll('.step-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      if (automationRunning) return;
+      const step = Number(tab.dataset.step);
+      currentStep = step;
+      updateStepTabs();
+      fillCurrentStep(step);
+    });
+  });
+
+  if (session?.parsedFile) restoreSession(session);
+  refreshPageStatus();
+}
+
+/** Batches the operator-facing mapping queue (from pipeline.collectMappingQueue) into
+ * one prompt per unique value; resolves once the whole queue is drained or skipped. */
+function resolveMappingQueueInteractive(queue) {
+  return new Promise((resolve) => {
+    mappingQueue = [...queue];
+    mappingResolveCallback = resolve;
+    showNextQueueItem();
+  });
+}
+
+function showNextQueueItem() {
+  if (!mappingQueue.length) {
+    hideMappingPrompt();
+    const cb = mappingResolveCallback;
+    mappingResolveCallback = null;
+    cb?.();
+    return;
+  }
+  pendingMapping = mappingQueue.shift();
+  showMappingPrompt(pendingMapping);
+}
+
+/** Runs the fix+validate pipeline for every row using already-resolved mappings,
+ * and merges with the previous session's progress when it's the same file. */
+async function finalizeUpload(parsed, fileId, previousSession) {
+  const { resolved } = await collectMappingQueue(parsed.rows, fileId, settings);
+  const builtRows = parsed.rows.map((r) => buildRow(r, resolved, fileId));
+  let requests = buildAllRequests(builtRows);
+  let droppedCount = 0;
+
+  if (previousSession?.parsedFile?.rows) {
+    const merged = mergeRowsOnReupload(previousSession.parsedFile.rows, builtRows);
+    droppedCount = merged.droppedCount;
+  }
+  if (previousSession?.requests) {
+    requests = mergeRequestsOnReupload(previousSession.requests, requests);
+  }
+
+  const sameFile = previousSession?.parsedFile?.fileId === fileId;
+  const newSession = {
+    parsedFile: { ...parsed, fileId, rows: builtRows },
+    requests,
+    currentIndex: sameFile ? Math.min(previousSession.currentIndex ?? 0, requests.length - 1) : 0,
+    log: previousSession?.log || [],
+    startedAt: previousSession?.startedAt || new Date().toISOString(),
+  };
+  await saveSession(newSession);
+  if (droppedCount) {
+    log(`${droppedCount} שורות מהקובץ הקודם לא נמצאו בקובץ החדש והוסרו`);
+    await persistLog();
+  }
+  return newSession;
+}
+
+async function handleFileUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const fileId = fileIdOf(file.name);
+    const parsed = parseExcelBuffer(buffer, file.name);
+
+    if (session?.parsedFile && session.parsedFile.fileId !== fileId) {
+      const total = session.requests?.length ?? 0;
+      const done = session.requests?.filter(isRequestDone).length ?? 0;
+      const inProgress = done > 0 || (session.currentIndex ?? 0) > 0;
+      if (inProgress) {
+        const ok = confirm(
+          `קובץ פעיל: ${session.parsedFile.fileName}\n` +
+            `הושלמו ${done} מתוך ${total} שורות.\n\n` +
+            `לטעון "${file.name}" במקום? ההתקדמות בקובץ הנוכחי תימחק.`
+        );
+        if (!ok) {
+          e.target.value = '';
+          return;
+        }
+      }
+      resetForNewFile();
+      session = null;
+    }
+
+    const { queue } = await collectMappingQueue(parsed.rows, fileId, settings);
+    if (queue.length) await resolveMappingQueueInteractive(queue);
+
+    session = await finalizeUpload(parsed, fileId, session);
+    showFileUI(session);
+    showCurrentRow();
+    log(`נטען קובץ: ${session.requests.length} שורות, סה"כ ${formatCurrency(session.parsedFile.totalAmount)} ₪`);
+    await persistLog();
+  } catch (err) {
+    alert(`Error loading file: ${err.message}`);
+  } finally {
+    e.target.value = '';
+  }
+}
+
+/** Re-runs mapping resolution for the currently loaded file without needing a re-upload. */
+async function fixMappings() {
+  if (!session?.parsedFile) return;
+  const { queue } = await collectMappingQueue(session.parsedFile.rows, session.parsedFile.fileId, settings);
+  if (!queue.length) {
+    log('אין מיפויים חסרים');
+    await persistLog();
+    return;
+  }
+  await resolveMappingQueueInteractive(queue);
+  session = await finalizeUpload(session.parsedFile, session.parsedFile.fileId, session);
+  showFileUI(session);
+  showCurrentRow();
+  log('מיפויים עודכנו');
+  await persistLog();
+}
+
+function resetForNewFile() {
+  hideMappingPrompt();
+  currentStep = 1;
+  updateStepTabs();
+  $('fillLog').textContent = '';
+}
+
+function restoreSession(sess) {
+  session = sess;
+  showFileUI(session);
+  showCurrentRow();
+  $('fillLog').textContent = (session.log || [])
+    .map((l) => `[${new Date(l.ts).toLocaleTimeString('he-IL')}] ${l.message}`)
+    .join('\n');
+}
+
+function showFileUI(sess) {
+  $('uploadSection').classList.add('hidden');
+  $('navSection').classList.remove('hidden');
+  $('fileInfo').classList.remove('hidden');
+  $('progressSection').classList.remove('hidden');
+  $('currentRowSection').classList.remove('hidden');
+  $('rowListSection').classList.remove('hidden');
+
+  const parsed = sess.parsedFile;
+  $('fileName').textContent = parsed.fileName;
+  $('cityName').textContent = parsed.city || parsed.cities.join(', ');
+  $('rowCount').textContent = sess.requests.length;
+  $('totalAmount').textContent = `${formatCurrency(parsed.totalAmount)} ₪`;
+
+  const needsMapping = sess.requests.filter((r) => r.status === ROW_STATUS.NEEDS_MAPPING).length;
+  const invalid = sess.requests.filter((r) => r.status === ROW_STATUS.INVALID).length;
+  $('pipelineStatus').textContent =
+    needsMapping || invalid ?
+      `⚠ ${invalid} שורות לא תקינות, ${needsMapping} דורשות מיפוי`
+    : '✓ כל השורות מוכנות למילוי';
+
+  const city = parsed.city;
+  $('loginId').textContent = findCityLoginId(settings.cities, city) || '(not set – open Settings)';
+  renderRowList();
+  updateProgress();
+}
+
+function showCurrentRow() {
+  if (!session?.requests?.length) return;
+  const request = session.requests[session.currentIndex];
+  if (!request) return;
+  const f = request.fields;
+  const errorsHtml = request.errors?.length ?
+      `<div style="color:#c0392b">⚠ ${request.errors.map((e) => e.reason).join('; ')}</div>`
+    : '';
+
+  $('rowDetails').innerHTML = `
+    <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ID ${f.idNumber || ''}<br>
+    📞 ${f.mobilePhone || f.homePhone || ''} | 🎂 ${f.birthDate || ''} | ${f.maritalStatus || ''}<br>
+    📍 ${f.street || ''} ${f.building || ''}, ${f.settlement || f.citySearch || ''}<br>
+    <strong>Type:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
+    <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
+    ${errorsHtml}
+  `;
+  renderRowList();
+  updateProgress();
+}
+
+function renderRowList() {
+  const list = $('rowList');
+  list.innerHTML = '';
+  let shown = 0;
+  session.requests.forEach((request, i) => {
+    if (!matchesFilter(request)) return;
+    shown += 1;
+    const f = request.fields;
+    const li = document.createElement('li');
+    // Per-step glyph: ● filled, ✗ failed, ○ pending.
+    const stepGlyphs = [1, 2, 3]
+      .map((s) => (request.steps[s] === STEP_STATUS.FILLED ? '●' : request.steps[s] === STEP_STATUS.FAILED ? '✗' : '○'))
+      .join('');
+    const stepFailed = [1, 2, 3].some((s) => request.steps[s] === STEP_STATUS.FAILED);
+    // Show "חלק k/n" when a row was split over the item's price limit.
+    const splitTag = request.splitCount > 1 ? ` (חלק ${request.splitIndex + 1}/${request.splitCount})` : '';
+    li.innerHTML =
+      `${i + 1}. ${f.firstName || ''} ${f.lastName || ''} – ${formatCurrency(Number(f.amount) || 0)} ₪${splitTag} [${stepGlyphs}]` +
+      (request.errors?.length ? `<span class="row-error">${request.errors[0].reason}</span>` : '');
+    if (isRequestDone(request)) li.classList.add('done');
+    else if (request.status === ROW_STATUS.INVALID) li.classList.add('invalid');
+    else if (request.status === ROW_STATUS.NEEDS_MAPPING) li.classList.add('needs-mapping');
+    else if (stepFailed) li.classList.add('step-failed');
+    if (i === session.currentIndex) li.classList.add('active');
+    li.addEventListener('click', () => {
+      session.currentIndex = i;
+      saveSession(session);
+      showCurrentRow();
+    });
+    list.appendChild(li);
+  });
+  if (shown === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'אין שורות בסינון זה';
+    li.style.cursor = 'default';
+    list.appendChild(li);
+  }
+}
+
+function updateProgress() {
+  const total = session.requests.length;
+  const done = session.requests.filter(isRequestDone).length;
+  $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
+  $('progressText').textContent = `${done} / ${total} done | row ${session.currentIndex + 1}`;
+}
+
+function updateStepTabs() {
+  document.querySelectorAll('.step-tab').forEach((tab) => {
+    tab.classList.toggle('active', Number(tab.dataset.step) === currentStep);
+  });
+}
+
+async function findAllFormFrames(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        function collectDocs(doc, out, seen) {
+          if (!doc || seen.has(doc)) return;
+          seen.add(doc);
+          out.push(doc);
+          for (const iframe of doc.querySelectorAll('iframe')) {
+            try {
+              if (iframe.contentDocument) collectDocs(iframe.contentDocument, out, seen);
+            } catch (e) {}
+          }
+        }
+        const docs = [];
+        collectDocs(document, docs, new Set());
+        const ids = { e199: 'mutav', e687: 'catalog', e305: 'whohowm', e25: 'home' };
+        for (const doc of docs) {
+          for (const [id, page] of Object.entries(ids)) {
+            try {
+              if (doc.getElementById(id)) return { page, id };
+            } catch (e) {}
+          }
+        }
+        return null;
+      },
+    });
+    return results
+      .filter((r) => r.result?.page)
+      .map((r) => ({ frameId: r.frameId, page: r.result.page, id: r.result.id }));
+  } catch {
+    return [];
+  }
+}
+
+async function getAllTabFrameIds(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => true,
+    });
+    const ids = [...new Set(results.map((r) => r.frameId))];
+    return ids.length ? ids : [0];
+  } catch {
+    return [0];
+  }
+}
+
+async function findFormFrame(tabId) {
+  const frames = await findAllFormFrames(tabId);
+  if (frames.length) return frames[0];
+
+  const tab = await chrome.tabs.get(tabId);
+  return { frameId: 0, page: pageFromTabUrl(tab?.url), url: tab?.url };
+}
+
+function pageFromTabUrl(url) {
+  const u = (url || '').toUpperCase();
+  if (u.includes('/MUTAV')) return 'mutav';
+  if (u.includes('/CATALOG')) return 'catalog';
+  if (u.includes('/WHOHOWM')) return 'whohowm';
+  if (u.includes('IFCJAIDHOME')) return 'home';
+  return 'unknown';
+}
+
+function resolvePageType({ tabUrl, msgUrl, msgPage }) {
+  if (msgPage && msgPage !== 'unknown') return msgPage;
+  const fromTab = pageFromTabUrl(tabUrl);
+  if (fromTab !== 'unknown') return fromTab;
+  return pageFromTabUrl(msgUrl);
+}
+
+async function ensureContentScript(tabId, frameId = 0) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId });
+    return;
+  } catch (e) {}
+
+  await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    files: ['content/content.js'],
+  });
+  await new Promise((r) => setTimeout(r, 300));
+}
+
+async function getFormTitanTab() {
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (active?.url?.includes('ifcjil.formtitan.com')) return active;
+
+  const tabs = await chrome.tabs.query({ url: 'https://ifcjil.formtitan.com/*' });
+  if (!tabs.length) return null;
+  return tabs.find((t) => t.active) || tabs[tabs.length - 1];
+}
+
+function scoreFillResponse(response, phase) {
+  if (!response?.ok) return -1;
+  const results = response.results || [];
+  const idOk = results.some((r) => r.ok && (r.field === 'idNumber' || r.label === 'ת.ז.'));
+  const lookupOk = results.some((r) => r.field === 'idLookup' && r.ok);
+  const okCount = results.filter((r) => r.ok).length;
+  if (phase === 'id') return (idOk ? 100 : 0) + (lookupOk ? 50 : 0) + okCount;
+  return okCount + (response.filled ?? 0);
+}
+
+async function sendToContent(message) {
+  const tab = await getFormTitanTab();
+  if (!tab?.id) {
+    throw new Error('No FormTitan tab – open ifcjil.formtitan.com and click the page');
+  }
+
+  await ensureContentScript(tab.id);
+
+  const formFrames = await findAllFormFrames(tab.id);
+  const detectedFrameIds = formFrames.length ? [...new Set(formFrames.map((f) => f.frameId))] : [];
+  const allFrameIds = await getAllTabFrameIds(tab.id);
+  const frameIds = detectedFrameIds.length ? detectedFrameIds : allFrameIds;
+
+  async function sendOnce(frameId) {
+    const response = await chrome.tabs.sendMessage(tab.id, message, { frameId });
+    if (response === undefined) throw new Error('NO_RESPONSE');
+    return response;
+  }
+
+  async function sendWithRetry(frameId) {
+    try {
+      return await sendOnce(frameId);
+    } catch (err) {
+      const msg = err?.message || '';
+      if (
+        !msg.includes('Receiving end does not exist') &&
+        !msg.includes('Could not establish connection') &&
+        msg !== 'NO_RESPONSE'
+      ) {
+        throw err;
+      }
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ['content/content.js'],
+      });
+      await new Promise((r) => setTimeout(r, 400));
+      return await sendOnce(frameId);
+    }
+  }
+
+  if (message.type === 'VERIFY_ID') {
+    const tryOrder = [
+      ...new Set([
+        ...(lastWorkingFrameId != null ? [lastWorkingFrameId] : []),
+        ...detectedFrameIds,
+        ...allFrameIds,
+      ]),
+    ];
+    for (const frameId of tryOrder) {
+      try {
+        const response = await sendWithRetry(frameId);
+        if (response?.ok) {
+          lastWorkingFrameId = frameId;
+          return { ...response, frameId };
+        }
+      } catch (e) {}
+    }
+    return { ok: false };
+  }
+
+  if (message.type === 'FILL_STEP') {
+    const tryOrder = [
+      ...new Set([
+        ...(lastWorkingFrameId != null ? [lastWorkingFrameId] : []),
+        ...detectedFrameIds,
+        ...allFrameIds,
+      ]),
+    ];
+    let best = null;
+    let bestScore = -1;
+    let bestFrameId = null;
+
+    for (const frameId of tryOrder) {
+      try {
+        const response = await sendWithRetry(frameId);
+        const score = scoreFillResponse(response, message.phase);
+        if (score > bestScore) {
+          bestScore = score;
+          best = response;
+          bestFrameId = frameId;
+        }
+        const idFilled = response?.results?.some(
+          (r) => r.ok && (r.field === 'idNumber' || r.label === 'ת.ז.')
+        );
+        const lookupOk = response?.results?.some((r) => r.field === 'idLookup' && r.ok);
+        if (message.phase === 'id' && response?.ok && idFilled && lookupOk) {
+          lastWorkingFrameId = frameId;
+          return { ...response, frameId };
+        }
+        if (message.phase === 'details' && response?.ok && (response.filled > 0 || score > 0)) {
+          lastWorkingFrameId = frameId;
+          return { ...response, frameId };
+        }
+      } catch (e) {
+        if (!best) best = { ok: false, error: e.message };
+      }
+    }
+
+    if (bestFrameId != null && bestScore > 0) lastWorkingFrameId = bestFrameId;
+    if (best) return { ...best, frameId: bestFrameId };
+    throw new Error('Fill failed – form not found in any frame');
+  }
+
+  if (lastWorkingFrameId != null) {
+    try {
+      return { ...(await sendWithRetry(lastWorkingFrameId)), frameId: lastWorkingFrameId };
+    } catch (e) {}
+  }
+
+  return sendWithRetry(frameIds[0]);
+}
+
+async function getPageInfoForTab() {
+  const tab = await getFormTitanTab();
+  if (!tab?.id) return { ok: false, error: 'no tab' };
+
+  await ensureContentScript(tab.id);
+
+  const allFrameIds = await getAllTabFrameIds(tab.id);
+  let best = null;
+  let errorPopup = null; // an error popup can be in any frame - surface it regardless
+
+  for (const frameId of allFrameIds) {
+    try {
+      const msg = await chrome.tabs.sendMessage(
+        tab.id,
+        { type: 'GET_PAGE_INFO' },
+        { frameId }
+      );
+      if (!msg?.ok) continue;
+      if (msg.errorPopup && !errorPopup) errorPopup = msg.errorPopup;
+      const page = resolvePageType({ tabUrl: tab.url, msgUrl: msg.url, msgPage: msg.page });
+      const info = {
+        ...msg,
+        page,
+        url: tab.url || msg.url,
+        frameId,
+        detectedVia: 'content-script',
+      };
+      if (page === 'mutav' || msg.hasMutavForm) return { ...info, errorPopup: errorPopup || info.errorPopup };
+      if (!best || (page !== 'unknown' && best.page === 'unknown')) best = info;
+    } catch (e) {}
+  }
+
+  if (best) return { ...best, errorPopup: errorPopup || best.errorPopup };
+
+  let frame;
+  try {
+    frame = await findFormFrame(tab.id);
+  } catch (e) {
+    frame = { frameId: 0, page: pageFromTabUrl(tab.url), url: tab.url };
+  }
+
+  return {
+    ok: true,
+    page: resolvePageType({ tabUrl: tab.url, msgUrl: frame.url, msgPage: frame.page }),
+    url: tab.url || frame.url,
+    frameId: frame.frameId ?? 0,
+    marker: frame.id,
+    detectedVia: 'frame-probe',
+  };
+}
+
+function showMappingPrompt(item) {
+  $('mappingSection').classList.remove('hidden');
+  $('mappingType').textContent = item.type;
+  $('mappingExcelValue').textContent = item.excelValue;
+  $('mappingAffectedCount').textContent = String(item.affectedRowKeys?.length ?? 0);
+
+  const select = $('mappingSiteValue');
+  select.innerHTML = '';
+  const suggestions = item.suggestions || [];
+  if (suggestions.length) {
+    select.classList.remove('hidden');
+    $('mappingSiteValueText').classList.add('hidden');
+    suggestions.forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      select.appendChild(opt);
+    });
+  } else {
+    select.classList.add('hidden');
+    $('mappingSiteValueText').classList.remove('hidden');
+    $('mappingSiteValueText').value = '';
+  }
+}
+
+function hideMappingPrompt() {
+  pendingMapping = null;
+  $('mappingSection').classList.add('hidden');
+}
+
+async function saveMappingAndContinue() {
+  if (!pendingMapping) return;
+  const siteValue =
+    $('mappingSiteValue').classList.contains('hidden') ?
+      $('mappingSiteValueText').value.trim()
+    : $('mappingSiteValue').value;
+
+  if (!siteValue) {
+    alert('Enter a site value');
+    return;
+  }
+
+  const extra = {};
+  if (pendingMapping.type === 'budgetType') {
+    const idx = ['', 'סיוע חירום למשפחות', 'אזרחים ותיקים', 'ניצולי שואה', 'בתי משפט קהילתיים', 'של"מ', 'נפגעי אלימות במשפחה'].indexOf(siteValue);
+    if (idx > 0) extra.labelIndex = idx;
+  }
+  if (pendingMapping.type === 'item') {
+    extra.selector = siteValue;
+  }
+
+  await saveMapping(
+    pendingMapping.type,
+    pendingMapping.excelValue,
+    siteValue,
+    pendingMapping.context || {},
+    extra
+  );
+
+  log(`נשמר מיפוי: ${pendingMapping.excelValue} → ${siteValue}`);
+  showNextQueueItem();
+}
+
+function skipMappingAndContinue() {
+  if (pendingMapping) log(`מיפוי דולג: ${pendingMapping.excelValue}`);
+  showNextQueueItem();
+}
+
+async function fillCurrentStep(stepOverride) {
+  const step = stepOverride || currentStep;
+  const request = session.requests[session.currentIndex];
+
+  try {
+    const pageInfo = await getPageInfoForTab();
+    const expectedPage = { 1: 'mutav', 2: 'catalog', 3: 'whohowm' }[step];
+
+    if (!pageInfo?.ok) {
+      log(`Connection error: ${pageInfo?.error || 'unknown'}. Reload FormTitan (F5).`);
+      await persistLog();
+      return;
+    }
+
+    const page =
+      pageInfo.page && pageInfo.page !== 'unknown' ?
+        pageInfo.page
+      : pageFromTabUrl(pageInfo.url) || 'unknown';
+    if (page !== expectedPage && page !== 'unknown') {
+      log(`Warning: on ${page}, expected ${expectedPage}. Navigate first.`);
+    } else if (page === 'unknown') {
+      log(`Page not recognized (url: ${pageInfo.url}) – filling step ${step} anyway…`);
+    } else {
+      log(`Page: ${page}${pageInfo.frameId != null ? ` (frame ${pageInfo.frameId})` : ''}`);
+    }
+
+    if (request.status !== ROW_STATUS.READY) {
+      log(`שורה זו דורשת תיקון (${request.status}): ${request.errors?.[0]?.reason || 'מיפוי חסר – השתמש ב"תקן מיפויים"'}`);
+      await persistLog();
+      return;
+    }
+
+    if (step === 1) log('Step 1: fill ID → search → fill remaining fields');
+
+    const prepared = { ok: true, fields: request.fields, ...request.fields };
+    const fillPayload = {
+      type: 'FILL_STEP',
+      step,
+      prepared,
+      selectors: settings.selectors,
+      delayMs: settings.fillDelayMs,
+      idLookupWaitMs: settings.idLookupWaitMs,
+      searchWaitMs: settings.searchWaitMs || 1500,
+    };
+
+    let fieldsOk = false;
+    if (step === 1) {
+      log('Filling ID and clicking search…');
+      const idResult = await sendToContent({ ...fillPayload, phase: 'id' });
+      logFillResult(idResult, step);
+
+      const idOk = idResult?.results?.some(
+        (r) => r.ok && (r.field === 'idNumber' || r.label === 'ת.ז.')
+      );
+      const lookupOk = idResult?.results?.some((r) => r.field === 'idLookup' && r.ok);
+
+      let canContinue = idOk && lookupOk;
+      if (!canContinue) {
+        const verify = await sendToContent({
+          type: 'VERIFY_ID',
+          idNumber: request.fields.idNumber,
+          selectors: settings.selectors,
+        });
+        if (verify?.ok) {
+          log(`ID verified on page (${verify.actual}) – continuing`);
+          canContinue = true;
+        }
+      }
+
+      if (!canContinue) {
+        await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+        log('שלב 1 נכשל – ת.ז. או חיפוש נכשלו');
+        return;
+      }
+
+      log('Filling remaining details…');
+      const detailsResult = await sendToContent({ ...fillPayload, phase: 'details' });
+      logFillResult(detailsResult, step);
+      fieldsOk = allFieldsOk(detailsResult);
+    } else {
+      const result = await sendToContent(fillPayload);
+      logFillResult(result, step);
+      fieldsOk = allFieldsOk(result);
+    }
+
+    // An error popup during the field fill (e.g. a failed ID lookup) fails the stage
+    // outright, with the popup's message.
+    const err = await currentErrorPopup();
+    if (err) {
+      await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+      log(`שלב ${step} נכשל – הופיעה הודעת שגיאה: "${err}"`);
+      return;
+    }
+
+    await advanceStep(step, fieldsOk, request);
+  } catch (err) {
+    log(`Error: ${err.message}. Ensure FormTitan is the active tab.`);
+  } finally {
+    await persistLog();
+    renderRowList();
+    updateProgress();
+  }
+}
+
+/** Completes a stage: verifies the fields succeeded, performs the site's advance
+ * action (next/submit button, or nothing for CATALOG where the item click already
+ * navigated), confirms the page actually moved to the expected next page, and only
+ * then marks the stage FILLED. Anything short of that marks it FAILED. */
+async function advanceStep(step, fieldsOk, request) {
+  request = request || session.requests[session.currentIndex];
+  const expected = EXPECTED_NEXT_PAGE[step];
+
+  if (!fieldsOk) {
+    await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+    log(`שלב ${step} נכשל – שדות לא מולאו כראוי, לא ממשיך`);
+    return false;
+  }
+
+  // CATALOG has no next/submit button - selecting the item is what navigates.
+  if (step === 2) {
+    const outcome = await waitForStageOutcome(expected, 4000);
+    return finishStage(step, request, outcome, expected, 'לא עברנו ל-WhoHowM לאחר בחירת הפריט');
+  }
+
+  // MUTAV / WhoHowM: click next/submit, then require the page to change.
+  const clickRes = await sendToContent({ type: 'CLICK_NEXT', step, selectors: settings.selectors });
+  if (!clickRes?.ok) {
+    await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+    log(`שלב ${step} נכשל – כפתור ${step === 1 ? 'הבא' : 'שליחה'} לא נמצא`);
+    return false;
+  }
+
+  const outcome = await waitForStageOutcome(expected, 8000);
+  return finishStage(step, request, outcome, expected, `הדף לא עבר ל-${NEXT_PAGE_LABEL[expected]} אחרי הלחיצה`);
+}
+
+/** Marks a stage FILLED/FAILED from a waitForStageOutcome result - an error popup or a
+ * missing navigation both count as failure (a popped-up error means the site rejected
+ * the stage). Advances currentStep on success. */
+async function finishStage(step, request, outcome, expected, timeoutReason) {
+  if (outcome.navigated) {
+    await setStepStatus(session, request.requestId, step, STEP_STATUS.FILLED);
+    log(`שלב ${step} עבר – עברנו ל-${NEXT_PAGE_LABEL[expected]}`);
+    if (step < 3) {
+      currentStep = step + 1;
+      updateStepTabs();
+    }
+    refreshPageStatus();
+    return true;
+  }
+
+  await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+  if (outcome.error) {
+    log(`שלב ${step} נכשל – הופיעה הודעת שגיאה: "${outcome.error}"`);
+  } else {
+    log(`שלב ${step} נכשל – ${timeoutReason}`);
+  }
+  refreshPageStatus();
+  return false;
+}
+
+async function startNewRecord() {
+  try {
+    const result = await sendToContent({ type: 'START_NEW_RECORD', selectors: settings.selectors });
+    if (result.ok) {
+      log('Clicked new record – wait for MUTAV page');
+      setTimeout(refreshPageStatus, 1500);
+    } else {
+      log('New record button not found – go to home page first');
+    }
+  } catch (err) {
+    log(`Error: ${err.message}`);
+  }
+}
+
+/** Navigates the FormTitan tab to the home page and waits for it to load. */
+async function goHome() {
+  const tab = await getFormTitanTab();
+  if (!tab?.id) {
+    log('אין טאב של FormTitan פתוח');
+    return false;
+  }
+  await chrome.tabs.update(tab.id, { url: SITE.homeUrl });
+  const atHome = await waitForPageChange('home', 12000);
+  if (!atHome) log('לא הצלחנו להגיע לדף הבית');
+  return atHome;
+}
+
+/** Clicks "רשומה חדשה" and waits for the MUTAV form. Retries the click, because
+ * right after force-navigating to home the page's handlers may not be attached yet,
+ * so the first click can land too early and do nothing (the standalone button works
+ * because the operator clicks a page that has already settled). */
+async function newRecordAndWaitMutav() {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await new Promise((r) => setTimeout(r, 1000)); // let the home page hydrate
+    const nr = await sendToContent({ type: 'START_NEW_RECORD', selectors: settings.selectors });
+    if (!nr?.ok) {
+      log(`ניסיון ${attempt}: כפתור "רשומה חדשה" לא נמצא${nr?.error ? ` (${nr.error})` : ''}`);
+      continue;
+    }
+    if (await waitForPageChange('mutav', 6000)) return true;
+    const info = await getPageInfoForTab();
+    // Still on home means the click didn't register (too early) - loop and retry.
+    if (info?.page !== 'home' && (await waitForPageChange('mutav', 4000))) return true;
+    log(`ניסיון ${attempt}: עדיין לא ב-MUTAV (הדף: ${info?.page || '?'}) – מנסה שוב`);
+  }
+  const info = await getPageInfoForTab();
+  log(`הטופס (MUTAV) לא נטען אחרי "רשומה חדשה" (הדף כרגע: ${info?.page || '?'} ${info?.url || ''})`);
+  return false;
+}
+
+/** Fills the request at session.currentIndex end to end: home → new record → fill
+ * stages 1,2,3 in order. Stops at the first stage that doesn't pass (leaving the
+ * operator on it). Returns { ok, stoppedAt (0 = success), needsFix }. */
+async function fillOneRequest() {
+  const request = session.requests[session.currentIndex];
+  if (!request) return { ok: false, stoppedAt: 1 };
+  if (request.status !== ROW_STATUS.READY) {
+    log(`בקשה ${session.currentIndex + 1} דורשת תיקון (${request.status}) – מדלג`);
+    return { ok: false, stoppedAt: 1, needsFix: true };
+  }
+
+  const f = request.fields;
+  log(`— בקשה ${session.currentIndex + 1}: ${f.firstName || ''} ${f.lastName || ''} —`);
+  if (stopRequested) return { ok: false, stoppedAt: 1, stopped: true };
+  if (!(await goHome())) return { ok: false, stoppedAt: 1 };
+  if (stopRequested) return { ok: false, stoppedAt: 1, stopped: true };
+  if (!(await newRecordAndWaitMutav())) return { ok: false, stoppedAt: 1 };
+
+  for (const step of [1, 2, 3]) {
+    if (stopRequested) return { ok: false, stoppedAt: step, stopped: true };
+    currentStep = step;
+    updateStepTabs();
+    await fillCurrentStep(step);
+    const req = session.requests[session.currentIndex];
+    if (req.steps[step] !== STEP_STATUS.FILLED) {
+      log(`בקשה ${session.currentIndex + 1} נעצרה בשלב ${step} – יש להשלים ידנית`);
+      return { ok: false, stoppedAt: step };
+    }
+  }
+  log(`בקשה ${session.currentIndex + 1} הושלמה בהצלחה`);
+  return { ok: true, stoppedAt: 0 };
+}
+
+/** Disables the manual controls during automation; the batch button doubles as a
+ * "stop" toggle while a batch is running. */
+function setAutomationRunning(on, batch = false) {
+  automationRunning = on;
+  ['newRecordBtn', 'fillRequestBtn', 'prevRowBtn', 'nextRowBtn', 'markSuccessBtn', 'markFailureBtn'].forEach(
+    (id) => {
+      const b = $(id);
+      if (b) b.disabled = on;
+    }
+  );
+  document.querySelectorAll('.step-tab').forEach((tab) => {
+    tab.disabled = on;
+  });
+  const batchBtn = $('fillFromCurrentBtn');
+  if (batchBtn) {
+    if (batch) {
+      batchBtn.disabled = false;
+      batchBtn.textContent = on ? '■ עצור' : 'מלא בקשות מהנוכחית';
+    } else {
+      batchBtn.disabled = on;
+    }
+  }
+}
+
+/** Button 1 — "מלא בקשה": fill only the current request, stopping on the first error
+ * so the operator can finish that stage manually. */
+async function runFillRequest() {
+  if (automationRunning) return;
+  setAutomationRunning(true);
+  try {
+    const result = await fillOneRequest();
+    if (!result.ok && result.stoppedAt) {
+      currentStep = result.stoppedAt; // leave the operator on the failing stage
+      updateStepTabs();
+    }
+  } catch (err) {
+    log(`שגיאה: ${err.message}`);
+  } finally {
+    setAutomationRunning(false);
+    await persistLog();
+    showCurrentRow();
+    renderRowList();
+    updateProgress();
+    refreshPageStatus();
+  }
+}
+
+/** Button 2 — "מלא בקשות מהנוכחית": fill every request from the current one onward.
+ * Unlike button 1, an errored request is left marked failed and the run continues to
+ * the next request (going home to abandon the partial one). Click again to stop. */
+async function runFillFromCurrent() {
+  if (automationRunning) {
+    stopRequested = true;
+    const btn = $('fillFromCurrentBtn');
+    if (btn) {
+      btn.textContent = '⏳ עוצר…';
+      btn.disabled = true;
+    }
+    log('בקשת עצירה…');
+    return;
+  }
+  stopRequested = false;
+  setAutomationRunning(true, true);
+  try {
+    const filterLabels = { undone: 'רק שלא הושלמו', failed: 'רק שנכשלו', needsfix: 'רק שדורשות תיקון' };
+    if (filterLabels[rowFilter]) log(`מסנן פעיל: ${filterLabels[rowFilter]}`);
+    const start = session.currentIndex;
+    for (let i = start; i < session.requests.length; i++) {
+      if (stopRequested) break;
+      // Respect the row-list filter - the batch only runs on requests it matches.
+      if (!matchesFilter(session.requests[i])) continue;
+      session.currentIndex = i;
+      currentStep = 1;
+      await saveSession(session);
+      showCurrentRow();
+
+      if (isRequestDone(session.requests[i])) {
+        log(`בקשה ${i + 1} כבר הושלמה – מדלג`);
+        continue;
+      }
+
+      const result = await fillOneRequest();
+      if (result.stopped) break; // stop was requested mid-request
+      if (!result.ok) {
+        // The failing stage is already marked FAILED; abandon the partial request
+        // on the site and move on (unless it was an unfillable/invalid row).
+        log(`בקשה ${i + 1} לא הושלמה – ממשיך לבקשה הבאה`);
+        if (!result.needsFix) await goHome();
+      }
+    }
+    log(stopRequested ? 'הופסק ע"י המפעיל' : '— סיום מילוי הבקשות —');
+  } catch (err) {
+    log(`שגיאה: ${err.message}`);
+  } finally {
+    stopRequested = false;
+    setAutomationRunning(false, true);
+    await persistLog();
+    showCurrentRow();
+    renderRowList();
+    updateProgress();
+    refreshPageStatus();
+  }
+}
+
+/** Manual override: force all three stages of the current request to one status
+ * (FILLED = mark the whole row as success, FAILED = mark it as failure), for when
+ * the automatic detection got it wrong. */
+async function overrideRequestStatus(status) {
+  if (automationRunning) return;
+  const request = session.requests[session.currentIndex];
+  if (!request) return;
+  for (const step of [1, 2, 3]) {
+    await setStepStatus(session, request.requestId, step, status);
+  }
+  log(
+    status === STEP_STATUS.FILLED
+      ? `בקשה ${session.currentIndex + 1} סומנה ידנית כהצלחה`
+      : `בקשה ${session.currentIndex + 1} סומנה ידנית ככישלון`
+  );
+  await persistLog();
+  showCurrentRow();
+  renderRowList();
+  updateProgress();
+}
+
+function navigateRow(delta) {
+  const next = session.currentIndex + delta;
+  if (next >= 0 && next < session.requests.length) {
+    session.currentIndex = next;
+    saveSession(session);
+    showCurrentRow();
+    currentStep = 1;
+    updateStepTabs();
+  }
+}
+
+async function refreshPageStatus() {
+  const el = $('pageStatus');
+  if (!el) return;
+  try {
+    const info = await getPageInfoForTab();
+    const labels = {
+      home: 'Home – click New Record',
+      mutav: 'MUTAV – fill step 1',
+      catalog: 'CATALOG – fill step 2',
+      whohowm: 'WhoHowM – fill step 3',
+      unknown: 'FormTitan – page unknown',
+    };
+    if (info?.ok && info.page) {
+      el.textContent = `✓ ${labels[info.page] || info.url}${info.frameId != null ? ` [frame ${info.frameId}]` : ''}`;
+    } else {
+      el.textContent = info?.url || 'Connected – reload page if fill fails';
+    }
+  } catch {
+    el.textContent = 'Open FormTitan (ifcjil.formtitan.com) in a browser tab';
+  }
+}
+
+/** Builds an .xlsx (processed table + log) the operator can open outside the extension. */
+function exportSessionFile() {
+  if (!session?.requests?.length) {
+    alert('אין נתונים לייצוא');
+    return;
+  }
+  const tableRows = session.requests.map((r, i) => ({
+    '#': i + 1,
+    status: r.status,
+    step1: r.steps[1],
+    step2: r.steps[2],
+    step3: r.steps[3],
+    errors: (r.errors || []).map((e) => `${e.field}: ${e.reason}`).join('; '),
+    ...r.fields,
+  }));
+  let logRows = (session.log || []).map((l) => ({ time: l.ts, message: l.message }));
+  if (!logRows.length) {
+    // Fall back to the on-screen log (one entry per line) so the Log sheet reflects
+    // what the operator actually saw, even if session.log wasn't populated.
+    logRows = ($('fillLog').textContent || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((line) => ({ time: '', message: line }));
+  }
+  if (!logRows.length) logRows = [{ time: '', message: '(אין יומן)' }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tableRows), 'Requests');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logRows), 'Log');
+  const safeName = (session.parsedFile.fileName || 'export').replace(/\.xlsx?$/i, '');
+  XLSX.writeFile(wb, `${safeName}_export.xlsx`);
+}
+
+function logFillResult(result, step) {
+  if (!result?.ok && result?.error) {
+    log(`Fill error: ${result.error}`);
+  }
+  if (result?.results?.length) {
+    log(`Step ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} fields`);
+    result.results.forEach((r) => {
+      if (r.skipped) log(`  ⊘ ${r.label || r.field} – locked: "${r.value}"`);
+      else log(`  ${r.ok ? '✓' : '✗'} ${r.label || r.field} = ${r.value ?? ''}${r.reason ? ` (${r.reason})` : ''}`);
+    });
+  } else if (result?.ok) {
+    log(`Step ${step} completed but no field details returned`);
+  }
+}
+
+/** Updates the on-screen log and the in-memory session.log; call persistLog() to save. */
+function log(msg) {
+  const el = $('fillLog');
+  const ts = new Date().toISOString();
+  el.textContent = `[${new Date(ts).toLocaleTimeString('he-IL')}] ${msg}\n` + el.textContent;
+  if (session) {
+    session.log = session.log || [];
+    session.log.unshift({ ts, message: msg });
+    // Cap the log so a long batch can't grow it past the storage quota (which would
+    // make saveSession fail and drop the log on the next popup open).
+    if (session.log.length > 3000) session.log.length = 3000;
+  }
+}
+
+async function persistLog() {
+  if (session) await saveSession(session);
+}
+
+init();

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>מזין בקשות סיוע</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>מזין בקשות סיוע</h1>
+    <div class="header-right">
+      <span id="appVersion" class="app-version"></span>
+      <a href="#" id="openOptions" title="הגדרות">⚙️</a>
+    </div>
+  </header>
+
+  <section class="card" id="uploadSection">
+    <label class="upload-btn">
+      📂 טען קובץ אקסל
+      <input type="file" id="fileInput" accept=".xlsx,.xls" hidden />
+    </label>
+    <p class="hint">שורות 7+ | כותרות בשורה 6</p>
+  </section>
+
+  <section class="card hidden" id="fileInfo">
+    <div class="file-info-header">
+      <h2>קובץ נוכחי</h2>
+      <button class="btn" id="loadAnotherFileBtn" type="button">📂 טען קובץ אחר</button>
+    </div>
+    <div class="info-row"><span>קובץ:</span><strong id="fileName"></strong></div>
+    <div class="info-row"><span>עיר:</span><strong id="cityName"></strong></div>
+    <div class="info-row"><span>שורות:</span><strong id="rowCount"></strong></div>
+    <div class="info-row"><span>סה"כ סכום:</span><strong id="totalAmount"></strong></div>
+    <div class="info-row" id="loginIdRow">
+      <span>ת.ז. התחברות:</span>
+      <strong id="loginId"></strong>
+    </div>
+    <p class="hint" id="pipelineStatus"></p>
+    <div class="actions">
+      <button class="btn" id="fixMappingsBtn" type="button">🔧 תקן מיפויים</button>
+      <button class="btn" id="exportBtn" type="button">⬇ ייצוא טבלה + יומן</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="navSection">
+    <h2>ניווט באתר</h2>
+    <p class="hint" id="pageStatus">טוען מצב דף...</p>
+    <div class="actions">
+      <button class="btn primary" id="newRecordBtn">+ רשומה חדשה (#e25)</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="mappingSection">
+    <h2>מיפוי נדרש</h2>
+    <p class="hint" id="mappingQueueHint">ערך מהאקסל לא מוכר – בחר התאמה לשמירה:</p>
+    <div class="info-row"><span>סוג:</span><strong id="mappingType"></strong></div>
+    <div class="info-row"><span>ערך אקסל:</span><strong id="mappingExcelValue"></strong></div>
+    <div class="info-row"><span>שורות מושפעות:</span><strong id="mappingAffectedCount"></strong></div>
+    <label>
+      ערך באתר
+      <select id="mappingSiteValue"></select>
+      <input type="text" id="mappingSiteValueText" class="hidden" placeholder="הקלד ערך באתר" />
+    </label>
+    <div class="actions">
+      <button class="btn primary" id="saveMappingBtn">שמור והמשך</button>
+      <button class="btn" id="cancelMappingBtn">דלג</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="progressSection">
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <p id="progressText">0 / 0</p>
+  </section>
+
+  <section class="card hidden" id="currentRowSection">
+    <h2>שורה נוכחית</h2>
+    <div class="row-details" id="rowDetails"></div>
+
+    <div class="actions">
+      <button class="btn primary" id="fillRequestBtn" title="דף הבית → רשומה חדשה → מילוי כל השלבים, עצירה בשגיאה">▶ מלא בקשה</button>
+      <button class="btn primary" id="fillFromCurrentBtn" title="מילוי כל הבקשות מהנוכחית והלאה; דילוג על שגיאות">⏩ מלא בקשות מהנוכחית</button>
+    </div>
+    <p class="hint">מילוי שלב בודד (לחיצה ממלאת את השלב באתר):</p>
+    <div class="step-tabs" id="stepTabs">
+      <button class="step-tab" data-step="1">מלא 1. MUTAV</button>
+      <button class="step-tab" data-step="2">מלא 2. CATALOG</button>
+      <button class="step-tab" data-step="3">מלא 3. WhoHowM</button>
+    </div>
+    <div class="actions">
+      <button class="btn success" id="markSuccessBtn" title="סמן ידנית שהבקשה הושלמה (מעקף)">✓ סמן כהצלחה</button>
+      <button class="btn danger" id="markFailureBtn" title="סמן ידנית שהבקשה נכשלה (מעקף)">✗ סמן ככישלון</button>
+    </div>
+    <div class="actions">
+      <button class="btn" id="prevRowBtn">← שורה קודמת</button>
+      <button class="btn" id="nextRowBtn">שורה הבאה →</button>
+    </div>
+    <pre class="log" id="fillLog"></pre>
+  </section>
+
+  <section class="card hidden" id="rowListSection">
+    <div class="file-info-header">
+      <h2>רשימת שורות</h2>
+      <select id="rowFilter" class="row-filter" title="מסנן גם את הרשימה וגם את 'מלא בקשות מהנוכחית'">
+        <option value="all">הצג: הכל</option>
+        <option value="undone">רק שלא הושלמו</option>
+        <option value="failed">רק שנכשלו</option>
+        <option value="needsfix">רק שדורשות תיקון</option>
+      </select>
+    </div>
+    <ul id="rowList" class="row-list"></ul>
+  </section>
+
+  <script src="../lib/xlsx.full.min.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

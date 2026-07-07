@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>הגדרות – מזין בקשות סיוע</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <h1>הגדרות</h1>
+
+  <section class="card">
+    <h2>ערים ות.ז. התחברות</h2>
+    <p class="hint">לכל עיר – ת.ז. שבה אתה מתחבר לאתר (SMS יוזן ידנית)</p>
+    <div id="citiesContainer"></div>
+    <button class="btn" id="addCityBtn">+ הוסף עיר</button>
+  </section>
+
+  <section class="card">
+    <h2>כתובת האתר</h2>
+    <label>
+      URL (לזיהוי)
+      <input type="url" id="siteUrl" placeholder="https://..." />
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>כללי</h2>
+    <label>
+      השהייה בין שדות (ms)
+      <input type="number" id="fillDelayMs" value="400" min="0" max="2000" />
+    </label>
+    <label>
+      המתנה אחרי חיפוש ת.ז. (ms)
+      <input type="number" id="idLookupWaitMs" value="2000" min="500" max="10000" />
+    </label>
+    <label>
+      המתנה אחרי שדה חיפוש (ms)
+      <input type="number" id="searchWaitMs" value="1500" min="500" max="10000" />
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>ייבוא/ייצוא הגדרות</h2>
+    <p class="hint">
+      שמירת הערים וההגדרות הכלליות לקובץ JSON, וטעינתן חזרה (למשל על מחשב אחר,
+      או כגיבוי). לא כולל selectors - אלה מוגדרים בקוד.
+    </p>
+    <div class="actions">
+      <button class="btn" id="exportSettingsBtn" type="button">⬇ הורד הגדרות (JSON)</button>
+      <label class="btn" for="importSettingsInput">⬆ העלה הגדרות (JSON)</label>
+      <input type="file" id="importSettingsInput" accept=".json" hidden />
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>קטגוריות (רשימות בחירה)</h2>
+    <p class="hint">
+      הערכים שיוצעו למפעיל כשנתקלים בערך לא ידוע. פריט ומקור תקציב מתחילים ריקים
+      ומתמלאים אוטומטית בכל פעם שנבחר ערך חדש עבורם – אפשר גם להוסיף כאן מראש.
+    </p>
+    <div id="categoriesContainer"></div>
+  </section>
+
+  <section class="card">
+    <h2>מיפוי ערכים (Excel → אתר)</h2>
+    <p class="hint">מיפויים נשמרים אוטומטית כשהמפעיל בוחר ערך, וניתן לערוך כאן.</p>
+    <button class="btn" id="refreshMappingsBtn">רענן</button>
+    <table class="mappings-table">
+      <thead>
+        <tr>
+          <th>סוג</th>
+          <th>ערך אקסל</th>
+          <th>ערך באתר</th>
+          <th>extra</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="mappingsBody"></tbody>
+    </table>
+  </section>
+
+  <div class="actions">
+    <button class="btn primary" id="saveBtn">שמור הגדרות</button>
+    <span id="saveStatus"></span>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
