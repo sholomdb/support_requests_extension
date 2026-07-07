@@ -44,6 +44,7 @@ async function init() {
   document.getElementById('fillDelayMs').value = settings.fillDelayMs || 400;
   document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 2000;
   document.getElementById('searchWaitMs').value = settings.searchWaitMs || 1500;
+  document.getElementById('pageWaitMs').value = settings.pageWaitMs || 20000;
 
   document.getElementById('saveBtn').addEventListener('click', saveAll);
   document.getElementById('addCityBtn').addEventListener('click', addCity);
@@ -217,6 +218,7 @@ async function saveAll() {
   settings.fillDelayMs = Number(document.getElementById('fillDelayMs').value) || 400;
   settings.idLookupWaitMs = Number(document.getElementById('idLookupWaitMs').value) || 2000;
   settings.searchWaitMs = Number(document.getElementById('searchWaitMs').value) || 1500;
+  settings.pageWaitMs = Number(document.getElementById('pageWaitMs').value) || 20000;
   // Selectors are defined in code (config.js DEFAULT_SELECTORS) only, not editable
   // here - drop any override left over from before, so code defaults always win.
   delete settings.selectors;
@@ -238,6 +240,7 @@ async function exportSettings() {
       fillDelayMs: settings.fillDelayMs,
       idLookupWaitMs: settings.idLookupWaitMs,
       searchWaitMs: settings.searchWaitMs,
+      pageWaitMs: settings.pageWaitMs,
       ...(await exportMappingData()),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -268,6 +271,7 @@ async function importSettingsFile(file) {
     if (data.fillDelayMs !== undefined) settings.fillDelayMs = data.fillDelayMs;
     if (data.idLookupWaitMs !== undefined) settings.idLookupWaitMs = data.idLookupWaitMs;
     if (data.searchWaitMs !== undefined) settings.searchWaitMs = data.searchWaitMs;
+    if (data.pageWaitMs !== undefined) settings.pageWaitMs = data.pageWaitMs;
 
     // Mappings, categories, and captured item info (chrome.storage.local).
     await importMappingData(data);
@@ -279,6 +283,7 @@ async function importSettingsFile(file) {
     document.getElementById('fillDelayMs').value = settings.fillDelayMs || 400;
     document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 2000;
     document.getElementById('searchWaitMs').value = settings.searchWaitMs || 1500;
+    document.getElementById('pageWaitMs').value = settings.pageWaitMs || 20000;
 
     delete settings.selectors;
     await saveSettings(settings);
