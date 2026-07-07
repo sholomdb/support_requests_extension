@@ -65,6 +65,20 @@ describe('parseExcelBuffer against the real sample files', () => {
     assert.ok(parsed.rows.every((r) => r.idNumber && r.idNumber.length > 0));
   });
 
+  test('a date-cell birth date is read from the serial, not swapped to US m/d/y', () => {
+    // Serial 39519 = 12 March 2008. Formatted US-style it would render "03/12/2008" and a
+    // dd/mm parser would keep it as 03/12/2008 (wrong). Reading the raw serial yields 12/03/2008.
+    const ws = {
+      '!ref': 'A1:L7',
+      C7: { t: 's', v: '123456782' },
+      L7: { t: 'n', v: 39519, z: 'mm/dd/yyyy' },
+    };
+    const wb = { SheetNames: ['Sheet1'], Sheets: { Sheet1: ws } };
+    const out = globalThis.XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const parsed = parseExcelBuffer(out, 'dates.xlsx');
+    assert.equal(parsed.rows[0].birthDate, '12/03/2008');
+  });
+
   test('throws a clear error for a file with no data rows', () => {
     // Build a tiny in-memory workbook with headers but no data rows.
     const wb = globalThis.XLSX.utils.book_new();

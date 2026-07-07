@@ -28,6 +28,9 @@ const COLUMN_MAP = {
 const HEADER_ROW = 6;
 const DATA_START_ROW = 7;
 
+/** Column letter whose value is the birth date (read raw - see getCellRaw). */
+const BIRTHDATE_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'birthDate');
+
 function cellRef(col, row) {
   return `${col}${row}`;
 }
@@ -38,6 +41,18 @@ function getCellValue(sheet, col, row) {
   if (cell.w !== undefined) return normalizeText(cell.w);
   if (cell.v !== undefined) return normalizeText(cell.v);
   return '';
+}
+
+/**
+ * Reads a cell's raw underlying value (cell.v) rather than its formatted text (cell.w).
+ * For a real date cell that's the unambiguous serial number; for a text cell it's the
+ * original string. Used for the birth date so normalizeBirthDate parses it directly -
+ * cell.w may be rendered by XLSX in US m/d/y order, which would silently swap day/month.
+ */
+function getCellRaw(sheet, col, row) {
+  const cell = sheet[cellRef(col, row)];
+  if (!cell) return '';
+  return cell.v !== undefined ? cell.v : cell.w !== undefined ? cell.w : '';
 }
 
 function parseRow(sheet, rowIndex, excelRowNum) {
@@ -53,7 +68,9 @@ function parseRow(sheet, rowIndex, excelRowNum) {
   row.city = normalizeCity(row.city);
   row.idNumber = normalizeIdNumber(row.idNumber);
   row.amount = Number(String(row.amount).replace(/[^\d.-]/g, '')) || 0;
-  row.birthDate = normalizeBirthDate(row.birthDate);
+  // Read the birth date raw (serial / original text), not XLSX's formatted display, so a
+  // date isn't silently swapped to US m/d/y order before normalizeBirthDate sees it.
+  row.birthDate = normalizeBirthDate(getCellRaw(sheet, BIRTHDATE_COL, excelRowNum));
   row.budgetType = normalizeText(row.budgetType);
   row.item = normalizeText(row.item);
   row.itemCategory = normalizeText(row.itemCategory);
