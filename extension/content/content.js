@@ -846,9 +846,13 @@ function clickDialogButton(dialog, textFragments) {
  * class, then the bare word. `scope` may be the modal dialog or the document (inline widget). */
 function clickModalSearchButton(scope, fieldId) {
   const root = scope && scope.querySelector ? scope : document;
+  // The field-specific button (e.g. ft--e424--modal--search) is unique, but in an inline
+  // widget it sits in a sibling grid item OUTSIDE the search input's container - so match it
+  // document-wide, not only within `scope`.
   const btn =
-    (fieldId && root.querySelector(`button[class*="e${fieldId}--modal--search"]`)) ||
-    root.querySelector('button[class*="modal--search"], button[class*="lookupModal--search"]');
+    (fieldId && querySelectorDeep(`button[class*="e${fieldId}--modal--search"]`)) ||
+    root.querySelector('button[class*="modal--search"], button[class*="lookupModal--search"]') ||
+    querySelectorDeep('button[class*="modal--search"], button[class*="lookupModal--search"]');
   if (btn) {
     dispatchClick(btn);
     return true;
@@ -873,10 +877,9 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
   let scope = null;
 
   if (searchInput && isVisible(searchInput)) {
-    scope =
-      searchInput.closest('[role="dialog"]') ||
-      (fieldId && searchInput.closest(`[class*="e${fieldId}--modal"]`)) ||
-      searchInput.ownerDocument;
+    // Inline widget: scope broadly (dialog if any, else the whole document) so the results
+    // table and search button - which live outside the search input's own container - are found.
+    scope = searchInput.closest('[role="dialog"]') || searchInput.ownerDocument;
   } else {
     const lookupBtn = parts?.root?.querySelector(
       'button[aria-label*="lookup"], button[aria-label*="Lookup"], button[aria-label*="חיפוש"]'
