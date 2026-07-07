@@ -14,7 +14,13 @@ export const CONSTANTS = {
   mutavKnowledge: ['yes', 'כן'],
   ministryFileExists: ['כן'],
   supplier: 'אש"ל חב"ד ירושלים',
+  // של"מ budgets (BUDGET_LABELS[5]) require the extra "בחירת אוכלוסיה" dropdown on WhoHowM
+  // to be set to this value.
+  shalamProgram: 'תכנית יתד',
 };
+
+/** Budget label index whose WhoHowM form has the extra שלמ "תכנית" dropdown. */
+export const SHALAM_LABEL_INDEX = 5;
 
 /** CATALOG budget labels (label:nth-child index → text) */
 export const BUDGET_LABELS = {
@@ -86,6 +92,8 @@ export const DEFAULT_SELECTORS = {
     supplier: '#e304',
     amount: '#e305',
     submitButton: '#e361',
+    // Extra "בחירת אוכלוסיה" dropdown, only present/filled for של"מ budgets.
+    shalamProgram: '#e1843',
   },
   balance: {
     currentBalance: '',

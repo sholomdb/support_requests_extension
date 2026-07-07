@@ -124,6 +124,24 @@ describe('buildRow', () => {
     assert.equal(row.fields.budgetSourceSearch, undefined);
   });
 
+  test('non-שלמ budgets get no שלמ program value', () => {
+    const raw = makeRawRow();
+    const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID); // default budget label index 1
+    assert.equal(row.fields.shalamProgram, '');
+  });
+
+  test('של"מ budgets (label index 5) get the fixed "תכנית יתד" program', () => {
+    const raw = makeRawRow();
+    const map = fullyResolvedMap(raw);
+    map.set(`${MAP_TYPES.budgetType}::${mappingKey(MAP_TYPES.budgetType, raw.budgetType)}`, {
+      siteValue: 'של"מ',
+      labelIndex: 5,
+    });
+    const row = buildRow(raw, map, FILE_ID);
+    assert.equal(row.fields.budgetLabelIndex, 5);
+    assert.equal(row.fields.shalamProgram, 'תכנית יתד');
+  });
+
   test('a row whose budget-source combo is unconfigured is INVALID (config-only, not prompted)', () => {
     const raw = makeRawRow();
     const map = fullyResolvedMap(raw);
