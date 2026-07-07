@@ -99,6 +99,11 @@ export const DEFAULT_SETTINGS = {
   fillDelayMs: 400,
   idLookupWaitMs: 4000,
   searchWaitMs: 1500,
+  // Max time to wait for any stage to navigate to its next page (step 1->2, 2->3, and the
+  // final 3->home submit). Polling returns as soon as the page changes, so a fast transition
+  // never waits this long; the budget is generous to avoid marking a slow-but-successful
+  // transition (especially the final submit) as failed.
+  pageWaitMs: 20000,
   autoAdvance: false,
 };
 

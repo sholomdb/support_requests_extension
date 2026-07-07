@@ -978,9 +978,14 @@ async function advanceStep(step, fieldsOk, request) {
     return false;
   }
 
+  // A page transition can take a while to land (the final submit especially), so we give
+  // every stage the same generous budget. waitForStageOutcome polls and returns the moment
+  // the page changes (or an error popup shows), so a fast transition never waits this long.
+  const waitMs = settings.pageWaitMs || 20000;
+
   // CATALOG has no next/submit button - selecting the item is what navigates.
   if (step === 2) {
-    const outcome = await waitForStageOutcome(expected, 4000);
+    const outcome = await waitForStageOutcome(expected, waitMs);
     return finishStage(step, request, outcome, expected, 'לא עברנו ל-WhoHowM לאחר בחירת הפריט');
   }
 
@@ -992,7 +997,7 @@ async function advanceStep(step, fieldsOk, request) {
     return false;
   }
 
-  const outcome = await waitForStageOutcome(expected, 8000);
+  const outcome = await waitForStageOutcome(expected, waitMs);
   return finishStage(step, request, outcome, expected, `הדף לא עבר ל-${NEXT_PAGE_LABEL[expected]} אחרי הלחיצה`);
 }
 
