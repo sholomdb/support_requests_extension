@@ -1480,28 +1480,37 @@ async function readBalance(selectors) {
 }
 
 /**
- * Reads the home-page "budget sources" table into { [sourceName]: remainingNIS }, which the
- * upload-time allocator (pipeline.allocateSources) draws down.
- *
- * TODO: wire the real DOM reading once the table's structure/selectors are supplied. Expected
- * selectors.budgetSources = { table, row, name, remaining } (row-scoped cell selectors). Until
- * then this returns {} so the caller can fall back to a manually-entered snapshot.
+ * Reads the home-page "budget sources" PowerTable into { [sourceName]: remainingNIS }, which
+ * the upload-time allocator (pipeline.allocateSources) draws down. Names/amounts are taken from
+ * the cell's `title` (full, untruncated) with a textContent fallback; amounts like "15,655.00"
+ * are parsed to 15655. Only rows currently rendered in the DOM are read (the table virtualizes,
+ * but the sources list is short and fully rendered).
  */
 async function captureBudgetSourceRemaining(selectors) {
   const cfg = selectors?.budgetSources;
   if (!cfg?.table || !cfg?.row) return { ok: false, reason: 'not-configured', remaining: {} };
 
-  const remaining = {};
   const table = querySelector(cfg.table);
   if (!table) return { ok: false, reason: 'table-not-found', remaining: {} };
+
+  const cellText = (row, sel) => {
+    const el = sel ? row.querySelector(sel) : null;
+    if (!el) return '';
+    const titled = el.matches('[title]') ? el : el.querySelector('[title]');
+    return normalizeText(titled?.getAttribute('title') || el.textContent || '');
+  };
+
+  const remaining = {};
+  let count = 0;
   for (const row of table.querySelectorAll(cfg.row)) {
-    const nameEl = cfg.name ? row.querySelector(cfg.name) : null;
-    const remEl = cfg.remaining ? row.querySelector(cfg.remaining) : null;
-    const name = normalizeText(nameEl?.textContent ?? '');
-    const num = Number(String(remEl?.value ?? remEl?.textContent ?? '').replace(/[^\d.-]/g, ''));
-    if (name && !Number.isNaN(num)) remaining[name] = num;
+    const name = cellText(row, cfg.name);
+    const num = Number(cellText(row, cfg.remaining).replace(/[^\d.-]/g, ''));
+    if (name && !Number.isNaN(num)) {
+      remaining[name] = num;
+      count += 1;
+    }
   }
-  return { ok: true, remaining };
+  return { ok: count > 0, reason: count ? undefined : 'no-rows', remaining, count };
 }
 
 async function startNewRecord(selectors) {

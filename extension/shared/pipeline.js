@@ -318,8 +318,10 @@ function nis(x) {
  *          keyed by rowKey
  */
 export function allocateSources(builtRows, snapshot = {}) {
+  // Key the pool by normalized source name so a snapshot read from the home-page table
+  // (whitespace/spacing as rendered) matches the source names chosen in the mapping list.
   const pool = {};
-  for (const k of Object.keys(snapshot)) pool[k] = nis(snapshot[k]);
+  for (const k of Object.keys(snapshot)) pool[normalizeText(k)] = nis(snapshot[k]);
 
   const out = new Map();
   for (const row of builtRows) {
@@ -337,11 +339,12 @@ export function allocateSources(builtRows, snapshot = {}) {
     const segments = [];
     for (const source of row.fields.budgetSourceList || []) {
       if (wanted <= 0) break;
-      const avail = pool[source];
+      const poolKey = normalizeText(source);
+      const avail = pool[poolKey];
       if (avail === undefined) continue; // source not on the home-page table => treated as 0
       const take = Math.min(wanted, Math.max(0, avail - 1)); // leave >= 1 NIS
       if (take <= 0) continue;
-      pool[source] = avail - take;
+      pool[poolKey] = avail - take;
       wanted -= take;
       segments.push({ source, amount: take });
     }

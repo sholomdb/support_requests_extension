@@ -90,6 +90,15 @@ export const DEFAULT_SELECTORS = {
   balance: {
     currentBalance: '',
   },
+  // Home-page "budget sources" PowerTable (#e978): source name in the 90d5826b column,
+  // remaining-to-use ("יתרה לניצול") in the 5ca47b4d column. Cells are matched within each
+  // body row by their column-id suffix, so this survives row re-ordering/virtualization.
+  budgetSources: {
+    table: '#e978',
+    row: '[data-id^="power-table-row-e978-"]',
+    name: '[data-id$="-90d5826b-e69e-4aa9-bf50-654e03264bd0"]',
+    remaining: '[data-id$="-5ca47b4d-9bf5-4a29-980f-bcd2d4e90cce"]',
+  },
 };
 
 export const DEFAULT_SETTINGS = {

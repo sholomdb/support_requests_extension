@@ -6,6 +6,7 @@ import {
   setStepStatus,
   isRequestDone,
   getBudgetSourceRemaining,
+  saveBudgetSourceRemaining,
 } from '../shared/storage.js';
 import { formatCurrency } from '../shared/utils.js';
 import {
@@ -123,6 +124,7 @@ async function init() {
   $('fileInput').addEventListener('change', handleFileUpload);
   $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
   $('newRecordBtn').addEventListener('click', startNewRecord);
+  $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
   $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
   $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
@@ -564,6 +566,28 @@ async function sendToContent(message) {
       } catch (e) {}
     }
     return { ok: false };
+  }
+
+  if (message.type === 'CAPTURE_SOURCE_REMAINING') {
+    // The budget-sources table lives in one of the form frames - probe them for the one
+    // that actually finds it, rather than guessing a single frame.
+    const tryOrder = [
+      ...new Set([
+        ...(lastWorkingFrameId != null ? [lastWorkingFrameId] : []),
+        ...detectedFrameIds,
+        ...allFrameIds,
+      ]),
+    ];
+    for (const frameId of tryOrder) {
+      try {
+        const response = await sendWithRetry(frameId);
+        if (response?.ok) {
+          lastWorkingFrameId = frameId;
+          return { ...response, frameId };
+        }
+      } catch (e) {}
+    }
+    return { ok: false, reason: 'table-not-found', remaining: {} };
   }
 
   if (message.type === 'FILL_STEP') {
@@ -1024,6 +1048,33 @@ async function finishStage(step, request, outcome, expected, timeoutReason) {
   }
   refreshPageStatus();
   return false;
+}
+
+/** Reads the budget-source remaining balances from the home-page table, stores them, and
+ * (if a file is loaded) re-plans the allocation so the row list reflects the fresh balances. */
+async function readBudgetSourceBalances() {
+  try {
+    const res = await sendToContent({ type: 'CAPTURE_SOURCE_REMAINING', selectors: settings.selectors });
+    if (!res?.ok) {
+      log(`לא נקראו יתרות מקורות (${res?.reason || 'ודא שאתה בדף הבית עם טבלת הסעיפים'})`);
+      await persistLog();
+      return;
+    }
+    await saveBudgetSourceRemaining(res.remaining);
+    const count = Object.keys(res.remaining).length;
+    log(`נקראו ${count} יתרות מקורות תקציב מדף הבית`);
+
+    if (session?.parsedFile) {
+      session = await finalizeUpload(session.parsedFile, session.parsedFile.fileId, session);
+      showFileUI(session);
+      showCurrentRow();
+      log('התקציבים חושבו מחדש עם היתרות המעודכנות');
+    }
+    await persistLog();
+  } catch (err) {
+    log(`שגיאה בקריאת יתרות: ${err.message}`);
+    await persistLog();
+  }
 }
 
 async function startNewRecord() {

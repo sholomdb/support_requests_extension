@@ -12,6 +12,7 @@ import {
   exportMappingData,
   importMappingData,
 } from '../shared/mappings.js';
+import { getBudgetSourceRemaining, saveBudgetSourceRemaining } from '../shared/storage.js';
 
 const TYPE_LABELS = {
   [MAP_TYPES.city]: 'עיר',
@@ -39,6 +40,8 @@ async function init() {
   settings = await loadSettings();
   renderCities();
   await renderCategories();
+  await renderBudgetSourceLists();
+  await renderBudgetBalances();
   await renderMappings();
   document.getElementById('siteUrl').value = settings.siteUrl || '';
   document.getElementById('fillDelayMs').value = settings.fillDelayMs || 400;
@@ -58,6 +61,159 @@ async function init() {
     await renderCategories();
     await renderMappings();
   });
+  document.getElementById('refreshBudgetSourcesBtn').addEventListener('click', async () => {
+    await renderBudgetSourceLists();
+    await renderBudgetBalances();
+  });
+}
+
+/** Small square action button (↑ ↓ ✕ etc.) used by the budget-source editors. */
+function miniBtn(text, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn btn-sm';
+  b.textContent = text;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/** One editable ordered budget-source list, keyed by its budgetType::city mapping. */
+function createBudgetSourceListBlock(row) {
+  const list =
+    row.siteValues && row.siteValues.length ? [...row.siteValues]
+    : row.siteValue ? [row.siteValue]
+    : [];
+
+  const block = document.createElement('div');
+  block.className = 'bs-block';
+
+  const ctx = row.context || {};
+  const heading = document.createElement('h3');
+  heading.textContent = [ctx.budgetType, ctx.city].filter(Boolean).join(' · ') || row.excelValue || row.key;
+
+  const ol = document.createElement('ol');
+  ol.className = 'source-list';
+
+  const status = document.createElement('span');
+  status.className = 'hint bs-status';
+
+  const renderList = () => {
+    ol.innerHTML = '';
+    list.forEach((src, i) => {
+      const li = document.createElement('li');
+      li.className = 'source-list-item';
+      const name = document.createElement('span');
+      name.className = 'source-name';
+      name.textContent = `${i + 1}. ${src}`;
+      const up = miniBtn('↑', () => {
+        if (i > 0) {
+          [list[i - 1], list[i]] = [list[i], list[i - 1]];
+          renderList();
+        }
+      });
+      const down = miniBtn('↓', () => {
+        if (i < list.length - 1) {
+          [list[i + 1], list[i]] = [list[i], list[i + 1]];
+          renderList();
+        }
+      });
+      const rm = miniBtn('✕', () => {
+        list.splice(i, 1);
+        renderList();
+      });
+      li.append(name, up, down, rm);
+      ol.appendChild(li);
+    });
+    if (!list.length) {
+      const empty = document.createElement('li');
+      empty.className = 'hint';
+      empty.textContent = 'הרשימה ריקה';
+      ol.appendChild(empty);
+    }
+  };
+
+  const addWrap = document.createElement('div');
+  addWrap.className = 'category-add';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'category-input';
+  input.placeholder = 'הוסף מקור תקציב';
+  const addBtn = miniBtn('+ הוסף', () => {
+    const value = input.value.trim();
+    if (!value) return;
+    if (!list.some((s) => s.toLowerCase() === value.toLowerCase())) list.push(value);
+    input.value = '';
+    renderList();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addBtn.click();
+  });
+  const saveBtn = miniBtn('שמור רשימה', async () => {
+    if (!list.length) {
+      status.textContent = 'הוסף לפחות מקור אחד';
+      return;
+    }
+    await saveMapping(MAP_TYPES.budgetSource, row.excelValue || row.key, list[0], row.context || {}, {
+      siteValues: [...list],
+    });
+    status.textContent = '✓ נשמר';
+  });
+  saveBtn.classList.add('primary');
+  addWrap.append(input, addBtn, saveBtn, status);
+
+  block.append(heading, ol, addWrap);
+  renderList();
+  return block;
+}
+
+async function renderBudgetSourceLists() {
+  const container = document.getElementById('budgetSourceListsContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  const rows = (await listMappingsFlat()).filter((r) => r.type === MAP_TYPES.budgetSource);
+  if (!rows.length) {
+    container.innerHTML =
+      '<p class="hint">אין רשימות עדיין – הן נוצרות כשממפים מקור תקציב בזמן טעינת קובץ.</p>';
+    return;
+  }
+  for (const row of rows) container.appendChild(createBudgetSourceListBlock(row));
+}
+
+async function renderBudgetBalances() {
+  const container = document.getElementById('budgetBalancesContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  const balances = await getBudgetSourceRemaining();
+  const entries = Object.entries(balances);
+  if (!entries.length) {
+    container.innerHTML =
+      '<p class="hint">אין יתרות שמורות. קרא אותן מדף הבית בכפתור "קרא יתרות מקורות" שבפופאפ.</p>';
+    return;
+  }
+  for (const [name, amount] of entries) {
+    const row = document.createElement('div');
+    row.className = 'balance-row';
+    const label = document.createElement('span');
+    label.className = 'balance-name';
+    label.textContent = name;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'balance-input';
+    input.value = amount;
+    input.addEventListener('change', async () => {
+      const all = await getBudgetSourceRemaining();
+      all[name] = Number(input.value) || 0;
+      await saveBudgetSourceRemaining(all);
+    });
+    const rm = miniBtn('✕', async () => {
+      const all = await getBudgetSourceRemaining();
+      delete all[name];
+      await saveBudgetSourceRemaining(all);
+      await renderBudgetBalances();
+    });
+    row.append(label, input, rm);
+    container.appendChild(row);
+  }
 }
 
 function renderCities() {
