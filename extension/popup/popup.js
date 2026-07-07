@@ -120,6 +120,7 @@ async function init() {
   $('nextRowBtn').addEventListener('click', () => navigateRow(1));
   $('saveMappingBtn').addEventListener('click', saveMappingAndContinue);
   $('cancelMappingBtn').addEventListener('click', skipMappingAndContinue);
+  $('mappingSiteValue').addEventListener('change', onMappingSiteValueChange);
   $('fixMappingsBtn').addEventListener('click', fixMappings);
   $('exportBtn').addEventListener('click', exportSessionFile);
   $('rowFilter').addEventListener('change', (e) => {
@@ -640,6 +641,8 @@ async function getPageInfoForTab() {
   };
 }
 
+const ADD_CATEGORY_OPTION = '__add_new_category__';
+
 function showMappingPrompt(item) {
   $('mappingSection').classList.remove('hidden');
   $('mappingType').textContent = item.type;
@@ -647,21 +650,40 @@ function showMappingPrompt(item) {
   $('mappingAffectedCount').textContent = String(item.affectedRowKeys?.length ?? 0);
 
   const select = $('mappingSiteValue');
+  const textInput = $('mappingSiteValueText');
   select.innerHTML = '';
+  textInput.value = '';
   const suggestions = item.suggestions || [];
   if (suggestions.length) {
     select.classList.remove('hidden');
-    $('mappingSiteValueText').classList.add('hidden');
+    textInput.classList.add('hidden');
     suggestions.forEach((s) => {
       const opt = document.createElement('option');
       opt.value = s;
       opt.textContent = s;
       select.appendChild(opt);
     });
+    // Let the operator add a brand-new category inline instead of only in Settings.
+    const addOpt = document.createElement('option');
+    addOpt.value = ADD_CATEGORY_OPTION;
+    addOpt.textContent = '➕ הוסף קטגוריה חדשה…';
+    select.appendChild(addOpt);
   } else {
     select.classList.add('hidden');
-    $('mappingSiteValueText').classList.remove('hidden');
-    $('mappingSiteValueText').value = '';
+    textInput.classList.remove('hidden');
+  }
+}
+
+/** When "add new category" is picked in the dropdown, reveal the free-text input so
+ * the operator can type a value not yet in the list; it's saved as a category on save. */
+function onMappingSiteValueChange() {
+  const textInput = $('mappingSiteValueText');
+  if ($('mappingSiteValue').value === ADD_CATEGORY_OPTION) {
+    textInput.classList.remove('hidden');
+    textInput.value = '';
+    textInput.focus();
+  } else {
+    textInput.classList.add('hidden');
   }
 }
 
@@ -672,12 +694,13 @@ function hideMappingPrompt() {
 
 async function saveMappingAndContinue() {
   if (!pendingMapping) return;
-  const siteValue =
-    $('mappingSiteValue').classList.contains('hidden') ?
-      $('mappingSiteValueText').value.trim()
-    : $('mappingSiteValue').value;
+  // Use the free-text input whenever it's showing: either there were no suggestions,
+  // or the operator picked "add new category" from the dropdown.
+  const textInput = $('mappingSiteValueText');
+  const usingText = !textInput.classList.contains('hidden');
+  const siteValue = usingText ? textInput.value.trim() : $('mappingSiteValue').value;
 
-  if (!siteValue) {
+  if (!siteValue || siteValue === ADD_CATEGORY_OPTION) {
     alert('Enter a site value');
     return;
   }
