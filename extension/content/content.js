@@ -230,11 +230,15 @@ async function fillField(selector, value, isSelect = false) {
   return { field: selector, ok: true, value: String(value), label: selector };
 }
 
-async function fillFieldIfEditable(selector, value, label) {
+async function fillFieldIfEditable(selector, value, label, optional = false) {
   const el = querySelector(selector);
   const input = el?.matches('input, textarea') ? el : el?.querySelector('input, textarea');
   const target = input || el;
   if (!target) return { field: selector, ok: false, reason: 'element not found', label };
+  // An empty value in an optional field (e.g. בית) is not a failure - just skip it.
+  if (optional && (value === undefined || value === null || String(value).trim() === '')) {
+    return { field: selector, ok: true, skipped: true, reason: 'empty (optional)', value: '', label };
+  }
   if (!isEditable(target)) {
     const current = target.value || target.textContent || '';
     return { field: selector, ok: true, skipped: true, reason: 'readonly', value: current.trim(), label };
@@ -1047,7 +1051,7 @@ async function fillMutavDetails(fields, selectors, delayMs) {
   await sleep(delayMs);
   results.push(await fillFieldIfEditable(s.street, fields.street, 'רחוב'));
   await sleep(delayMs);
-  results.push(await fillFieldIfEditable(s.building, fields.building, 'בית'));
+  results.push(await fillFieldIfEditable(s.building, fields.building, 'בית', true));
   await sleep(delayMs);
 
   if (s.city && fields.citySearch) {
