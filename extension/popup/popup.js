@@ -20,7 +20,7 @@ import {
   ROW_STATUS,
   STEP_STATUS,
 } from '../shared/pipeline.js';
-import { saveMapping, MAP_TYPES } from '../shared/mappings.js';
+import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
 
 let settings = null;
 let session = null;
@@ -117,6 +117,7 @@ const $ = (id) => document.getElementById(id);
 
 async function init() {
   settings = await loadSettings();
+  await migrateBudgetSourceToLabelKeys();
   session = await getSession();
 
   // Read straight from the manifest so it never drifts out of sync with the real version.

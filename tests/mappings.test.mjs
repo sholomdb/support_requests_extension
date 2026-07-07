@@ -19,6 +19,8 @@ const {
   setItemInfo,
   exportMappingData,
   importMappingData,
+  getBudgetSourceList,
+  migrateBudgetSourceToLabelKeys,
 } = await import('../extension/shared/mappings.js');
 const { catalogItemNames, catalogMaxPrice } = await import('../extension/shared/catalog-data.js');
 
@@ -30,7 +32,14 @@ describe('mappingKey', () => {
   test('plain types key on normalized excel value', () => {
     assert.equal(mappingKey(MAP_TYPES.city, '  אלעד  '), 'אלעד');
   });
-  test('budgetSource keys on budgetType+city from context, ignoring excelValue', () => {
+  test('budgetSource keys on budget label + city from context, ignoring excelValue', () => {
+    const key = mappingKey(MAP_TYPES.budgetSource, 'ignored', {
+      budgetLabel: 'סיוע חירום למשפחות',
+      city: 'ביתר',
+    });
+    assert.equal(key, 'סיוע חירום למשפחות::ביתר עילית');
+  });
+  test('budgetSource still keys on legacy budgetType context (migration fallback)', () => {
     const key = mappingKey(MAP_TYPES.budgetSource, 'ignored', { budgetType: 'משפחות', city: 'ביתר' });
     assert.equal(key, 'משפחות::ביתר עילית');
   });
@@ -40,8 +49,8 @@ describe('mappingKey', () => {
   });
   test('buildBudgetSourceKey matches mappingKey', () => {
     assert.equal(
-      buildBudgetSourceKey('משפחות', 'ביתר'),
-      mappingKey(MAP_TYPES.budgetSource, 'משפחות', { budgetType: 'משפחות', city: 'ביתר' })
+      buildBudgetSourceKey('אזרחים ותיקים', 'ביתר'),
+      mappingKey(MAP_TYPES.budgetSource, 'אזרחים ותיקים', { budgetLabel: 'אזרחים ותיקים', city: 'ביתר' })
     );
   });
 });
@@ -95,6 +104,42 @@ describe('resolveMapping', () => {
     await saveMapping(MAP_TYPES.item, 'מקרר', 'מקרר קטן');
     const rows = await listMappingsFlat();
     assert.ok(rows.some((r) => r.type === MAP_TYPES.item && r.siteValue === 'מקרר קטן'));
+  });
+
+  test('budgetSource stores and resolves an ordered priority list', async () => {
+    const ctx = { budgetType: 'אזרח ותיק', city: 'בית אל' };
+    await saveMapping(MAP_TYPES.budgetSource, 'אזרח ותיק::בית אל', 'srcA', ctx, {
+      siteValues: ['srcA', 'srcB'],
+    });
+    const resolved = await resolveMapping(MAP_TYPES.budgetSource, 'אזרח ותיק::בית אל', ctx);
+    assert.deepEqual(resolved.siteValues, ['srcA', 'srcB']);
+  });
+
+  test('a single-value budgetSource save does NOT drop an existing list', async () => {
+    const ctx = { budgetLabel: 'אזרחים ותיקים', city: 'בית אל' };
+    await saveMapping(MAP_TYPES.budgetSource, 'אזרחים ותיקים::בית אל', 'srcA', ctx, {
+      siteValues: ['srcA', 'srcB'],
+    });
+    // Simulate a single-value edit (e.g. from the generic mapping table) with no siteValues.
+    await saveMapping(MAP_TYPES.budgetSource, 'אזרחים ותיקים::בית אל', 'srcA', ctx);
+    const resolved = await resolveMapping(MAP_TYPES.budgetSource, 'אזרחים ותיקים::בית אל', ctx);
+    assert.deepEqual(resolved.siteValues, ['srcA', 'srcB']);
+  });
+
+  test('migrateBudgetSourceToLabelKeys re-keys a legacy raw-budgetType entry to its label', async () => {
+    // Legacy entry keyed by the raw Excel budget text ("משפחות").
+    await saveMapping(
+      MAP_TYPES.budgetSource,
+      'משפחות::אלעד',
+      'srcA',
+      { budgetType: 'משפחות', city: 'אלעד' },
+      { siteValues: ['srcA', 'srcB'] }
+    );
+    await migrateBudgetSourceToLabelKeys();
+    // "משפחות" resolves (via the budgetType seed) to the label "סיוע חירום למשפחות".
+    assert.deepEqual(await getBudgetSourceList('סיוע חירום למשפחות', 'אלעד'), ['srcA', 'srcB']);
+    // The old raw key is gone.
+    assert.deepEqual(await getBudgetSourceList('משפחות', 'אלעד'), []);
   });
 });
 
