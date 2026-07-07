@@ -1505,6 +1505,25 @@ function detectErrorPopup() {
   return null;
 }
 
+/** של"מ budgets are exempt from the site's under-18 age block, which shows a ConfirmationModal
+ * ("תקון" to proceed / "אינו תקון" to cancel). Clicks the confirm button so the flow continues.
+ * The confirm button is matched by its stable data-id/class - NOT by text, because the cancel
+ * button "אינו תקון" also contains "תקון". Returns true if such a modal was confirmed. */
+function confirmAgeWarning() {
+  for (const el of querySelectorAllDeep('[class*="ConfirmationModal--root"], [class*="warning-ractangle"]')) {
+    if (!isVisible(el)) continue;
+    const btn =
+      el.querySelector('[data-id="confirmation-dialog-confirm-btn"]') ||
+      el.querySelector('button.btn-yes[class*="ConfirmationModal--apply"]') ||
+      [...el.querySelectorAll('button')].find((b) => normalizeText(b.textContent) === 'תקון');
+    if (btn && isVisible(btn)) {
+      dispatchClick(btn);
+      return true;
+    }
+  }
+  return false;
+}
+
 async function readBalance(selectors) {
   const sel = selectors.balance?.currentBalance;
   if (!sel) return null;
@@ -1641,6 +1660,10 @@ async function handleMessage(message) {
 
   if (message.type === 'CAPTURE_SOURCE_REMAINING') {
     return captureBudgetSourceRemaining(message.selectors);
+  }
+
+  if (message.type === 'CONFIRM_AGE_WARNING') {
+    return { ok: true, confirmed: confirmAgeWarning() };
   }
 
   if (message.type === 'GET_PAGE_INFO') {

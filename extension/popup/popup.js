@@ -35,6 +35,12 @@ function isFillable(request) {
   return request.status !== ROW_STATUS.NEEDS_MAPPING && request.status !== ROW_STATUS.INVALID;
 }
 
+/** של"מ requests carry a non-empty shalamProgram (see pipeline buildRow); they're exempt
+ * from the site's under-18 age warning, which we auto-confirm ("תקון") for them. */
+function isShalamRequest(request) {
+  return Boolean(request?.fields?.shalamProgram);
+}
+
 /** Row-list filter (also gates which requests the "מלא בקשות מהנוכחית" batch runs on). */
 function matchesFilter(request) {
   switch (rowFilter) {
@@ -95,11 +101,22 @@ async function waitForPageChange(expected, timeoutMs = 8000) {
 
 /** Like waitForPageChange, but also bails the moment an error popup appears - the
  * stage failed regardless of navigation. Returns { navigated } | { error } | { timeout }. */
-async function waitForStageOutcome(expected, timeoutMs = 8000) {
+async function waitForStageOutcome(expected, timeoutMs = 8000, opts = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const info = await getPageInfoForTab();
-    if (info?.errorPopup) return { error: info.errorPopup };
+    if (info?.errorPopup) {
+      // של"מ budgets: the under-18 age warning is expected - confirm it ("תקון") and keep
+      // waiting for the page to navigate, instead of failing the stage.
+      if (opts.shalam) {
+        const res = await sendToContent({ type: 'CONFIRM_AGE_WARNING' });
+        if (res?.confirmed) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+      }
+      return { error: info.errorPopup };
+    }
     const page = info?.page && info.page !== 'unknown' ? info.page : pageFromTabUrl(info?.url);
     if (page === expected) return { navigated: true };
     await new Promise((r) => setTimeout(r, 400));
@@ -1010,12 +1027,19 @@ async function fillCurrentStep(stepOverride) {
     }
 
     // An error popup during the field fill (e.g. a failed ID lookup) fails the stage
-    // outright, with the popup's message.
+    // outright, with the popup's message. Exception: for של"מ budgets the under-18 age
+    // warning is expected - confirm it ("תקון") and continue.
     const err = await currentErrorPopup();
     if (err) {
-      await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
-      log(`שלב ${step} נכשל – הופיעה הודעת שגיאה: "${err}"`);
-      return;
+      const confirmed =
+        isShalamRequest(request) && (await sendToContent({ type: 'CONFIRM_AGE_WARNING' }))?.confirmed;
+      if (confirmed) {
+        log('אושרה אזהרת גיל (שלמ) – ממשיך');
+      } else {
+        await setStepStatus(session, request.requestId, step, STEP_STATUS.FAILED);
+        log(`שלב ${step} נכשל – הופיעה הודעת שגיאה: "${err}"`);
+        return;
+      }
     }
 
     await advanceStep(step, fieldsOk, request);
@@ -1047,9 +1071,11 @@ async function advanceStep(step, fieldsOk, request) {
   // the page changes (or an error popup shows), so a fast transition never waits this long.
   const waitMs = settings.pageWaitMs || 20000;
 
+  const stageOpts = { shalam: isShalamRequest(request) };
+
   // CATALOG has no next/submit button - selecting the item is what navigates.
   if (step === 2) {
-    const outcome = await waitForStageOutcome(expected, waitMs);
+    const outcome = await waitForStageOutcome(expected, waitMs, stageOpts);
     return finishStage(step, request, outcome, expected, 'לא עברנו ל-WhoHowM לאחר בחירת הפריט');
   }
 
@@ -1061,7 +1087,7 @@ async function advanceStep(step, fieldsOk, request) {
     return false;
   }
 
-  const outcome = await waitForStageOutcome(expected, waitMs);
+  const outcome = await waitForStageOutcome(expected, waitMs, stageOpts);
   return finishStage(step, request, outcome, expected, `הדף לא עבר ל-${NEXT_PAGE_LABEL[expected]} אחרי הלחיצה`);
 }
 
