@@ -8,7 +8,7 @@ import {
   getBudgetSourceRemaining,
   saveBudgetSourceRemaining,
 } from '../shared/storage.js';
-import { formatCurrency } from '../shared/utils.js';
+import { formatCurrency, normalizeText } from '../shared/utils.js';
 import {
   collectMappingQueue,
   buildRow,
@@ -28,6 +28,12 @@ let currentStep = 1;
 let automationRunning = false;
 let stopRequested = false;
 let rowFilter = 'all';
+
+/** A request can be filled if its data is complete. Out-of-budget rows ARE fillable on
+ * demand ("מלא בקשה") - only unresolved/invalid rows (missing data) are blocked. */
+function isFillable(request) {
+  return request.status !== ROW_STATUS.NEEDS_MAPPING && request.status !== ROW_STATUS.INVALID;
+}
 
 /** Row-list filter (also gates which requests the "מלא בקשות מהנוכחית" batch runs on). */
 function matchesFilter(request) {
@@ -184,23 +190,52 @@ function showNextQueueItem() {
 async function finalizeUpload(parsed, fileId, previousSession) {
   const { resolved } = await collectMappingQueue(parsed.rows, fileId, settings);
   const builtRows = parsed.rows.map((r) => buildRow(r, resolved, fileId));
-  // Plan which budget source funds each request, drawing down a snapshot of per-source
-  // remaining balances (assumes every row succeeds). builtRows are in Excel order, which
-  // is the allocator's consumption order.
-  const remainingSnapshot = await getBudgetSourceRemaining();
-  const allocation = allocateSources(builtRows, remainingSnapshot);
-  let requests = buildAllRequests(builtRows, allocation);
-  let droppedCount = 0;
-
-  if (previousSession?.parsedFile?.rows) {
-    const merged = mergeRowsOnReupload(previousSession.parsedFile.rows, builtRows);
-    droppedCount = merged.droppedCount;
-  }
-  if (previousSession?.requests) {
-    requests = mergeRequestsOnReupload(previousSession.requests, requests);
-  }
 
   const sameFile = previousSession?.parsedFile?.fileId === fileId;
+  const prevRequests = (sameFile && previousSession?.requests) || [];
+  const newRowKeys = new Set(builtRows.map((r) => r.rowKey));
+
+  // Rows already submitted ("already in") keep their previous split verbatim - we never
+  // re-plan submitted work. They're frozen, excluded from re-allocation, and their budget
+  // is already spent on the site (so not re-counted); any unfinished chunks of a frozen row
+  // earmark budget below so fresh rows don't grab it.
+  const committedRowKeys = new Set();
+  for (const req of prevRequests) {
+    if (isRequestDone(req)) committedRowKeys.add(req.rowKey);
+  }
+  const frozenRequests = prevRequests.filter(
+    (req) => committedRowKeys.has(req.rowKey) && newRowKeys.has(req.rowKey)
+  );
+
+  // Current per-source remaining (as read from the home page), minus budget earmarked for
+  // frozen rows' not-yet-submitted chunks.
+  const remainingSnapshot = await getBudgetSourceRemaining();
+  const pool = {};
+  for (const [k, v] of Object.entries(remainingSnapshot)) {
+    pool[normalizeText(k)] = (pool[normalizeText(k)] || 0) + (Number(v) || 0);
+  }
+  for (const req of frozenRequests) {
+    if (isRequestDone(req) || req.outOfBudget) continue; // done => already deducted on the site
+    const src = normalizeText(req.fields.budgetSourceSearch || '');
+    if (src && pool[src] != null) pool[src] -= Math.round(Number(req.fields.amount) || 0);
+  }
+
+  // Re-plan only the rows without submitted work, against the earmarked pool. builtRows are
+  // in Excel order (the allocator's consumption order).
+  const freshRows = builtRows.filter((r) => !committedRowKeys.has(r.rowKey));
+  const allocation = allocateSources(freshRows, pool);
+  let freshRequests = buildAllRequests(freshRows, allocation);
+  // Preserve partial (not-yet-submitted) step progress for fresh rows whose split is unchanged.
+  freshRequests = mergeRequestsOnReupload(prevRequests, freshRequests);
+
+  // Frozen (already-submitted) rows first so their positions stay stable, then the re-planned rows.
+  const requests = [...frozenRequests, ...freshRequests];
+
+  let droppedCount = 0;
+  if (previousSession?.parsedFile?.rows) {
+    droppedCount = mergeRowsOnReupload(previousSession.parsedFile.rows, builtRows).droppedCount;
+  }
+
   const newSession = {
     parsedFile: { ...parsed, fileId, rows: builtRows, remainingSnapshot },
     requests,
@@ -337,7 +372,11 @@ function showCurrentRow() {
     📞 ${f.mobilePhone || f.homePhone || ''} | 🎂 ${f.birthDate || ''} | ${f.maritalStatus || ''}<br>
     📍 ${f.street || ''} ${f.building || ''}, ${f.settlement || f.citySearch || ''}<br>
     <strong>Type:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
-    <strong>מקור תקציב:</strong> ${request.outOfBudget ? '⚠ חורג מתקציב' : request.sourceLabel || '—'}<br>
+    <strong>מקור תקציב:</strong> ${
+      request.outOfBudget ?
+        `⚠ חורג מתקציב${request.sourceLabel ? ` (ימולא ל: ${request.sourceLabel})` : ''}`
+      : request.sourceLabel || '—'
+    }<br>
     <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
   `;
@@ -910,7 +949,7 @@ async function fillCurrentStep(stepOverride) {
       log(`Page: ${page}${pageInfo.frameId != null ? ` (frame ${pageInfo.frameId})` : ''}`);
     }
 
-    if (request.status !== ROW_STATUS.READY) {
+    if (!isFillable(request)) {
       log(`שורה זו דורשת תיקון (${request.status}): ${request.errors?.[0]?.reason || 'מיפוי חסר – השתמש ב"תקן מיפויים"'}`);
       await persistLog();
       return;
@@ -1133,7 +1172,7 @@ async function newRecordAndWaitMutav() {
 async function fillOneRequest() {
   const request = session.requests[session.currentIndex];
   if (!request) return { ok: false, stoppedAt: 1 };
-  if (request.status !== ROW_STATUS.READY) {
+  if (!isFillable(request)) {
     log(`בקשה ${session.currentIndex + 1} דורשת תיקון (${request.status}) – מדלג`);
     return { ok: false, stoppedAt: 1, needsFix: true };
   }
@@ -1224,13 +1263,23 @@ async function runFillFromCurrent() {
   stopRequested = false;
   setAutomationRunning(true, true);
   try {
-    const filterLabels = { undone: 'רק שלא הושלמו', failed: 'רק שנכשלו', needsfix: 'רק שדורשות תיקון' };
+    const filterLabels = {
+      undone: 'רק שלא הושלמו',
+      failed: 'רק שנכשלו',
+      needsfix: 'רק שדורשות תיקון',
+      outofbudget: 'רק חורגות מתקציב',
+    };
     if (filterLabels[rowFilter]) log(`מסנן פעיל: ${filterLabels[rowFilter]}`);
     const start = session.currentIndex;
     for (let i = start; i < session.requests.length; i++) {
       if (stopRequested) break;
       // Respect the row-list filter - the batch only runs on requests it matches.
       if (!matchesFilter(session.requests[i])) continue;
+      // Out-of-budget requests are only filled on demand via "מלא בקשה", never in the batch.
+      if (session.requests[i].status === ROW_STATUS.OUT_OF_BUDGET) {
+        log(`בקשה ${i + 1} חורגת מתקציב – מדלג בריצת אצווה`);
+        continue;
+      }
       session.currentIndex = i;
       currentStep = 1;
       await saveSession(session);
