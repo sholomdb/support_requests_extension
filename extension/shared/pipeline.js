@@ -6,7 +6,7 @@
  * reasoning behind the `rowKey`/`requestId` split.
  */
 import { normalizeText, normalizeIdNumber, normalizeBirthDate, isValidBirthDate } from './utils.js';
-import { getCitySiteSearch, isMatehBinyamin, CONSTANTS } from './config.js';
+import { getCitySiteSearch, isMatehBinyamin, CONSTANTS, SHALAM_LABEL_INDEX } from './config.js';
 import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice, getAllMappings } from './mappings.js';
 import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.js';
 import {
@@ -287,6 +287,10 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     const catPrice = catalogMaxPrice(budget, item);
     if (catPrice != null) fields.itemMaxPrice = catPrice;
   }
+
+  // של"מ budgets need the fixed "תכנית" dropdown on WhoHowM; other budgets leave it empty.
+  fields.shalamProgram =
+    Number(fields.budgetLabelIndex) === SHALAM_LABEL_INDEX ? CONSTANTS.shalamProgram : '';
 
   let status = ROW_STATUS.READY;
   if (hasNeedsMapping) status = ROW_STATUS.NEEDS_MAPPING;
