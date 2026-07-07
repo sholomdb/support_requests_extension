@@ -40,6 +40,24 @@ export async function getBalanceHistory(city) {
   return history;
 }
 
+/**
+ * Per-budget-source remaining balances: { [sourceName]: number }. This is the pool the
+ * upload-time allocator (pipeline.allocateSources) draws down when planning which source
+ * funds each request. Populated from the site's home-page "budget sources" table (see
+ * content.captureBudgetSourceRemaining) or set/imported manually until that capture is wired.
+ * A source name is globally unique (each city+budget owns a disjoint set), so one flat map
+ * is unambiguous.
+ */
+export async function getBudgetSourceRemaining() {
+  const { budgetSourceRemaining } = await chrome.storage.local.get('budgetSourceRemaining');
+  return budgetSourceRemaining || {};
+}
+
+export async function saveBudgetSourceRemaining(map = {}) {
+  await chrome.storage.local.set({ budgetSourceRemaining: map });
+  return map;
+}
+
 export async function getSession() {
   const { session } = await chrome.storage.local.get('session');
   return session || null;

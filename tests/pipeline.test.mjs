@@ -10,6 +10,7 @@ const {
   buildRow,
   buildRequests,
   buildAllRequests,
+  allocateSources,
   splitAmount,
   collectMappingQueue,
   mergeRowsOnReupload,
@@ -116,7 +117,10 @@ describe('buildRow', () => {
     assert.equal(row.fields.budgetSiteValue, 'סיוע חירום למשפחות');
     assert.equal(row.fields.itemSelector, '#item1');
     assert.equal(row.fields.itemSiteValue, raw.item);
-    assert.equal(row.fields.budgetSourceSearch, 'מקור תקציב לדוגמה');
+    // budgetSource now resolves to an ordered list; the per-request budgetSourceSearch is
+    // assigned later by the allocator, not by buildRow.
+    assert.deepEqual(row.fields.budgetSourceList, ['מקור תקציב לדוגמה']);
+    assert.equal(row.fields.budgetSourceSearch, undefined);
   });
 
   test('an unresolved categorical field marks the row needs-mapping, not just invalid', () => {
@@ -252,50 +256,164 @@ describe('splitAmount', () => {
   });
 });
 
-describe('buildRequests (split by item max price)', () => {
-  test('a within-limit row produces one request', () => {
+describe('buildRequests (split by item price + budget-source allocation)', () => {
+  const SRC = 'מקור תקציב לדוגמה'; // the source fullyResolvedMap assigns
+  const BIG = { [SRC]: 1000000 }; // enough to fund any row fully
+
+  test('a within-limit, fully-funded row produces one request from its source', () => {
     const raw = makeRawRow({ item: 'מקרר', amount: 500 }); // מקרר limit in חירום = 4500
     const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
-    const requests = buildRequests(row);
+    const requests = buildRequests(row, allocateSources([row], BIG));
     assert.equal(requests.length, 1);
-    assert.equal(requests[0].requestId, `${row.rowKey}::0`);
     assert.equal(requests[0].fields.amount, '500');
+    assert.equal(requests[0].fields.budgetSourceSearch, SRC);
+    assert.equal(requests[0].sourceLabel, SRC);
+    assert.equal(requests[0].outOfBudget, false);
+    assert.equal(requests[0].status, ROW_STATUS.READY);
     assert.deepEqual(requests[0].steps, { 1: 'pending', 2: 'pending', 3: 'pending' });
   });
 
-  test('an over-limit row splits into 500 + 400, ids ::0 and ::1, other fields identical', () => {
-    // בלנדר limit in חירום = 400... use an item with a 500 limit for the example.
+  test('an over-limit row splits into 500 + 400, both funded from the source', () => {
     const raw = makeRawRow({ item: 'גלאי עשן', amount: 900 }); // גלאי עשן limit = 500
     assert.equal(catalogMaxPrice('סיוע חירום למשפחות', 'גלאי עשן'), 500);
     const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
-    const requests = buildRequests(row);
+    const requests = buildRequests(row, allocateSources([row], BIG));
     assert.equal(requests.length, 2);
     assert.deepEqual(requests.map((r) => r.fields.amount), ['500', '400']);
-    assert.deepEqual(requests.map((r) => r.requestId), [`${row.rowKey}::0`, `${row.rowKey}::1`]);
-    // everything except amount is identical
+    assert.ok(requests.every((r) => r.fields.budgetSourceSearch === SRC));
     assert.equal(requests[0].fields.idNumber, requests[1].fields.idNumber);
-    assert.equal(requests[0].fields.itemSiteValue, requests[1].fields.itemSiteValue);
     assert.equal(requests[1].splitIndex, 1);
     assert.equal(requests[1].splitCount, 2);
   });
 
-  test('split requestIds are stable across a re-parse of the same file (re-upload identity)', () => {
+  test('split requestIds are stable across a re-parse with the same balances', () => {
     const raw = makeRawRow({ item: 'גלאי עשן', amount: 900 });
-    const idsA = buildRequests(buildRow(raw, fullyResolvedMap(raw), FILE_ID)).map((r) => r.requestId);
-    const idsB = buildRequests(buildRow(raw, fullyResolvedMap(raw), FILE_ID)).map((r) => r.requestId);
+    const rowA = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
+    const rowB = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
+    const idsA = buildRequests(rowA, allocateSources([rowA], BIG)).map((r) => r.requestId);
+    const idsB = buildRequests(rowB, allocateSources([rowB], BIG)).map((r) => r.requestId);
     assert.deepEqual(idsA, idsB);
+  });
+
+  test('out-of-budget remainder becomes an OUT_OF_BUDGET request with no source', () => {
+    const raw = makeRawRow({ item: 'מקרר', amount: 400 });
+    const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
+    const requests = buildRequests(row, allocateSources([row], { [SRC]: 300 }));
+    // 299 funded + 101 out of budget.
+    const funded = requests.filter((r) => !r.outOfBudget);
+    const oob = requests.filter((r) => r.outOfBudget);
+    assert.deepEqual(funded.map((r) => r.fields.amount), ['299']);
+    assert.equal(funded[0].fields.budgetSourceSearch, SRC);
+    assert.deepEqual(oob.map((r) => r.fields.amount), ['101']);
+    assert.equal(oob[0].status, ROW_STATUS.OUT_OF_BUDGET);
+    assert.equal(oob[0].fields.budgetSourceSearch, '');
   });
 });
 
-describe('buildAllRequests (overflow appended at the end)', () => {
-  test('primary chunks keep row order; overflow chunks go last', () => {
+describe('buildAllRequests (funded first, out-of-budget last)', () => {
+  const SRC = 'מקור תקציב לדוגמה';
+
+  test('primary chunks keep row order; funded overflow chunks come after them', () => {
     const a = makeRawRow({ idNumber: '111111118', excelRow: 7, item: 'מקרר', amount: 500 }); // no split
     const b = makeRawRow({ idNumber: '222222226', excelRow: 8, item: 'גלאי עשן', amount: 900 }); // splits 500+400
     const rows = [a, b].map((r) => buildRow(r, fullyResolvedMap(r), FILE_ID));
-    const all = buildAllRequests(rows);
-    // primaries first (a::0, b::0), then overflow (b::1)
-    assert.deepEqual(all.map((r) => r.requestId.split('::').pop()), ['0', '0', '1']);
-    assert.equal(all[2].fields.amount, '400');
+    const all = buildAllRequests(rows, allocateSources(rows, { [SRC]: 1000000 }));
+    assert.deepEqual(all.map((r) => r.fields.amount), ['500', '500', '400']);
+    assert.ok(all.every((r) => !r.outOfBudget));
+  });
+
+  test('out-of-budget requests sort after every funded request', () => {
+    const a = makeRawRow({ idNumber: '111111118', excelRow: 7, item: 'מקרר', amount: 300 });
+    const b = makeRawRow({ idNumber: '222222226', excelRow: 8, item: 'מקרר', amount: 300 });
+    const rows = [a, b].map((r) => buildRow(r, fullyResolvedMap(r), FILE_ID));
+    // Pool 400: a takes 300 (leaves 100), b takes 99 (leave 1), 201 out of budget.
+    const all = buildAllRequests(rows, allocateSources(rows, { [SRC]: 400 }));
+    const flags = all.map((r) => r.outOfBudget);
+    assert.ok(flags.includes(true));
+    assert.ok(flags.lastIndexOf(false) < flags.indexOf(true)); // all funded before any OOB
+    assert.ok(
+      all.filter((r) => r.outOfBudget).every((r) => r.status === ROW_STATUS.OUT_OF_BUDGET)
+    );
+  });
+});
+
+describe('allocateSources', () => {
+  const rowWithSources = (sources, amount, over = {}) => {
+    const raw = makeRawRow({ amount, ...over }); // default item מקרר (limit 4500) => no item-cap split
+    const map = fullyResolvedMap(raw);
+    const [key] = resolvedEntry(
+      MAP_TYPES.budgetSource,
+      `${raw.budgetType}::${raw.city}`,
+      { budgetType: raw.budgetType, city: raw.city },
+      {}
+    );
+    map.set(key, { siteValue: sources[0], siteValues: sources });
+    return buildRow(raw, map, FILE_ID);
+  };
+
+  test('leaves >= 1 NIS and overflows the remainder to the next source', () => {
+    const row = rowWithSources(['A', 'B'], 400);
+    const alloc = allocateSources([row], { A: 300, B: 1000 }).get(row.rowKey);
+    assert.deepEqual(alloc.segments, [{ source: 'A', amount: 299 }, { source: 'B', amount: 101 }]);
+    assert.equal(alloc.outOfBudget, 0);
+  });
+
+  test('leftover no source can cover is marked out of budget', () => {
+    const row = rowWithSources(['A'], 400);
+    const alloc = allocateSources([row], { A: 300 }).get(row.rowKey);
+    assert.deepEqual(alloc.segments, [{ source: 'A', amount: 299 }]);
+    assert.equal(alloc.outOfBudget, 101);
+  });
+
+  test('exact fit still leaves 1 NIS (never drains a source to 0)', () => {
+    const row = rowWithSources(['A'], 400);
+    const alloc = allocateSources([row], { A: 400 }).get(row.rowKey);
+    assert.deepEqual(alloc.segments, [{ source: 'A', amount: 399 }]);
+    assert.equal(alloc.outOfBudget, 1);
+  });
+
+  test('a source already at 1 NIS gives nothing to later rows', () => {
+    const r1 = rowWithSources(['A'], 400, { idNumber: '111111118', excelRow: 7 });
+    const r2 = rowWithSources(['A'], 100, { idNumber: '222222226', excelRow: 8 });
+    const map = allocateSources([r1, r2], { A: 400 });
+    assert.deepEqual(map.get(r1.rowKey).segments, [{ source: 'A', amount: 399 }]);
+    assert.deepEqual(map.get(r2.rowKey).segments, []);
+    assert.equal(map.get(r2.rowKey).outOfBudget, 100);
+  });
+
+  test('a shared source is drawn down across rows in Excel order', () => {
+    const r1 = rowWithSources(['A'], 600, { idNumber: '111111118', excelRow: 7 });
+    const r2 = rowWithSources(['A'], 600, { idNumber: '222222226', excelRow: 8 });
+    const map = allocateSources([r1, r2], { A: 1000 });
+    assert.deepEqual(map.get(r1.rowKey).segments, [{ source: 'A', amount: 600 }]);
+    assert.deepEqual(map.get(r2.rowKey).segments, [{ source: 'A', amount: 399 }]);
+    assert.equal(map.get(r2.rowKey).outOfBudget, 201);
+  });
+
+  test('a source missing from the snapshot funds nothing (treated as 0)', () => {
+    const row = rowWithSources(['A', 'B'], 400);
+    const alloc = allocateSources([row], { B: 1000 }).get(row.rowKey);
+    assert.deepEqual(alloc.segments, [{ source: 'B', amount: 400 }]);
+    assert.equal(alloc.outOfBudget, 0);
+  });
+
+  test('non-READY rows are skipped and consume no budget', () => {
+    const good = rowWithSources(['A'], 300, { idNumber: '111111118', excelRow: 7 });
+    const badRaw = makeRawRow({ amount: 300, idNumber: '', excelRow: 8 }); // missing id => INVALID
+    const badMap = fullyResolvedMap(badRaw);
+    const [key] = resolvedEntry(
+      MAP_TYPES.budgetSource,
+      `${badRaw.budgetType}::${badRaw.city}`,
+      { budgetType: badRaw.budgetType, city: badRaw.city },
+      {}
+    );
+    badMap.set(key, { siteValue: 'A', siteValues: ['A'] });
+    const bad = buildRow(badRaw, badMap, FILE_ID);
+    assert.notEqual(bad.status, ROW_STATUS.READY);
+    const map = allocateSources([bad, good], { A: 1000 });
+    assert.ok(map.get(bad.rowKey).unresolved);
+    assert.deepEqual(map.get(bad.rowKey).segments, []);
+    assert.deepEqual(map.get(good.rowKey).segments, [{ source: 'A', amount: 300 }]);
   });
 });
 

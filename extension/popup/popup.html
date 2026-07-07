@@ -62,6 +62,11 @@
       <select id="mappingSiteValue"></select>
       <input type="text" id="mappingSiteValueText" class="hidden" placeholder="הקלד ערך באתר" />
     </label>
+    <div id="mappingSourceListWrap" class="hidden source-list-wrap">
+      <button class="btn btn-sm" id="mappingAddSourceBtn" type="button">+ הוסף מקור לרשימה</button>
+      <ol id="mappingSourceList" class="source-list"></ol>
+      <p class="hint">הרשימה מסודרת לפי עדיפות — המקור הראשון ינוצל קודם, וכשייגמר יעבור לבא אחריו.</p>
+    </div>
     <div class="actions">
       <button class="btn primary" id="saveMappingBtn">שמור והמשך</button>
       <button class="btn" id="cancelMappingBtn">דלג</button>
@@ -108,6 +113,7 @@
         <option value="undone">רק שלא הושלמו</option>
         <option value="failed">רק שנכשלו</option>
         <option value="needsfix">רק שדורשות תיקון</option>
+        <option value="outofbudget">רק חורגות מתקציב</option>
       </select>
     </div>
     <ul id="rowList" class="row-list"></ul>

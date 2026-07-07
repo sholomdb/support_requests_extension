@@ -333,3 +333,53 @@ label input {
   font-size: 11px;
   opacity: 0.85;
 }
+
+.row-list li.out-of-budget {
+  color: #8e44ad;
+}
+
+.row-list li.out-of-budget::before {
+  content: '₪✗ ';
+}
+
+/* Budget-source chip shown on each request row. */
+.row-list li .src-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #eef2f7;
+  color: #555;
+}
+
+.row-list li .src-tag.oob {
+  background: #f3e6f8;
+  color: #8e44ad;
+}
+
+/* Ordered budget-source list editor in the mapping prompt. */
+.source-list-wrap {
+  margin: 8px 0;
+}
+
+.source-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.source-list-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+}
+
+.source-list-item .source-name {
+  flex: 1;
+  font-size: 13px;
+}
+
+.btn.btn-sm.source-btn {
+  padding: 1px 7px;
+  min-width: 26px;
+}
