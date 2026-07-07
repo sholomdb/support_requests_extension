@@ -1475,6 +1475,31 @@ async function readBalance(selectors) {
   return Number.isNaN(num) ? null : num;
 }
 
+/**
+ * Reads the home-page "budget sources" table into { [sourceName]: remainingNIS }, which the
+ * upload-time allocator (pipeline.allocateSources) draws down.
+ *
+ * TODO: wire the real DOM reading once the table's structure/selectors are supplied. Expected
+ * selectors.budgetSources = { table, row, name, remaining } (row-scoped cell selectors). Until
+ * then this returns {} so the caller can fall back to a manually-entered snapshot.
+ */
+async function captureBudgetSourceRemaining(selectors) {
+  const cfg = selectors?.budgetSources;
+  if (!cfg?.table || !cfg?.row) return { ok: false, reason: 'not-configured', remaining: {} };
+
+  const remaining = {};
+  const table = querySelector(cfg.table);
+  if (!table) return { ok: false, reason: 'table-not-found', remaining: {} };
+  for (const row of table.querySelectorAll(cfg.row)) {
+    const nameEl = cfg.name ? row.querySelector(cfg.name) : null;
+    const remEl = cfg.remaining ? row.querySelector(cfg.remaining) : null;
+    const name = normalizeText(nameEl?.textContent ?? '');
+    const num = Number(String(remEl?.value ?? remEl?.textContent ?? '').replace(/[^\d.-]/g, ''));
+    if (name && !Number.isNaN(num)) remaining[name] = num;
+  }
+  return { ok: true, remaining };
+}
+
 async function startNewRecord(selectors) {
   const sel = selectors.navigation?.newRecordButton;
   if (!sel) return { ok: false, error: 'no newRecordButton selector' };
@@ -1563,6 +1588,10 @@ async function handleMessage(message) {
   if (message.type === 'READ_BALANCE') {
     const balance = await readBalance(message.selectors);
     return { ok: balance !== null, balance };
+  }
+
+  if (message.type === 'CAPTURE_SOURCE_REMAINING') {
+    return captureBudgetSourceRemaining(message.selectors);
   }
 
   if (message.type === 'GET_PAGE_INFO') {

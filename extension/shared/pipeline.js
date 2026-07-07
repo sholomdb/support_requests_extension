@@ -16,7 +16,13 @@ import {
   normalizeHolocaust,
 } from './inference.js';
 
-export const ROW_STATUS = { READY: 'ready', NEEDS_MAPPING: 'needs-mapping', INVALID: 'invalid' };
+export const ROW_STATUS = {
+  READY: 'ready',
+  NEEDS_MAPPING: 'needs-mapping',
+  INVALID: 'invalid',
+  // Money that no budget source in the row's list could fund (see allocateSources).
+  OUT_OF_BUDGET: 'out-of-budget',
+};
 export const STEP_STATUS = { PENDING: 'pending', FILLED: 'filled', FAILED: 'failed' };
 
 function required(reason) {
@@ -138,7 +144,9 @@ const FIELD_PIPELINE = [
     mapType: MAP_TYPES.budgetSource,
     source: (raw) => `${raw.budgetType}::${raw.city}`,
     context: (raw) => ({ budgetType: raw.budgetType, city: raw.city }),
-    outputAs: (entry) => ({ budgetSourceSearch: entry?.siteValue }),
+    // Resolves to an ordered priority list; the single per-request budgetSourceSearch is
+    // assigned later by the allocator/request-builder, not here.
+    outputAs: (entry) => ({ budgetSourceList: entry?.siteValues ?? (entry?.siteValue ? [entry.siteValue] : []) }),
     validate: required('מקור תקציב לא נפתר'),
   },
   { key: 'amount', step: 3, fix: (raw) => String(raw.amount), validate: (v) => (Number(v) > 0 ? null : 'סכום לא תקין') },
@@ -180,7 +188,7 @@ export async function collectMappingQueue(rawRows, fileId, settings) {
         let siteValue = result.siteValue;
         if (field.fallback && !siteValue) siteValue = field.fallback(raw, settings);
         const maxPrice = field.mapType === MAP_TYPES.item ? await getItemMaxPrice(siteValue) : undefined;
-        resolved.set(cacheKey, { siteValue, labelIndex: result.labelIndex, selector: result.selector, maxPrice });
+        resolved.set(cacheKey, { siteValue, siteValues: result.siteValues, labelIndex: result.labelIndex, selector: result.selector, maxPrice });
         continue;
       }
 
@@ -286,44 +294,133 @@ export function splitAmount(total, maxPrice) {
   return chunks;
 }
 
+/** Marker source name for the out-of-budget remainder in a requestId. */
+export const OOB_SOURCE = 'OOB';
+
+/** All money is whole NIS: the "never drain a source below 1 NIS" rule is integer arithmetic. */
+function nis(x) {
+  return Math.round(Number(x) || 0);
+}
+
 /**
- * One row -> one or more fillable requests, split so no request's amount exceeds the
- * item's per-budget limit (row.fields.itemMaxPrice, from catalog-data.js). e.g. an
- * item with a 500 limit requested at 900 yields two requests: 500 and 400, each with
- * all the other fields identical.
+ * Cross-row, order-dependent allocation of each row's amount across its ordered budget
+ * source list (row.fields.budgetSourceList), drawing down a shared remaining pool. Assumes
+ * every row will succeed, so it plans the whole file up front. MUST receive builtRows in
+ * Excel order - a source pool is consumed top-to-bottom and later rows see earlier draws.
  *
- * requestId is `${rowKey}::${chunkIndex}`. Since rowKey is `fileId::idNumber::excelRow`
- * and the split is deterministic from (amount, limit), re-uploading the same file
- * reproduces identical requestIds - so mergeRequestsOnReupload still matches each
- * chunk and preserves its progress. (Editing the amount in Excel may change how many
- * chunks a row produces; chunks that no longer exist are dropped on re-upload, chunk
- * ::0 keeps its progress.)
+ * Rule: a source can never be drained below 1 NIS, so the most drawable from a source is
+ * (remaining - 1). Leftover the list can't fund becomes out-of-budget. Only a local clone
+ * of the snapshot is mutated; the caller owns persistence.
+ *
+ * @param {Array} builtRows  rows from buildRow(), in Excel order
+ * @param {Object} snapshot  { [sourceName]: number } remaining per source
+ * @returns {Map<string, {segments: Array<{source,amount}>, outOfBudget: number, unresolved?: boolean}>}
+ *          keyed by rowKey
  */
-export function buildRequests(row) {
-  const chunks = splitAmount(row.fields.amount, row.fields.itemMaxPrice);
-  return chunks.map((amount, i) => ({
-    requestId: `${row.rowKey}::${i}`,
+export function allocateSources(builtRows, snapshot = {}) {
+  const pool = {};
+  for (const k of Object.keys(snapshot)) pool[k] = nis(snapshot[k]);
+
+  const out = new Map();
+  for (const row of builtRows) {
+    // Unresolved/invalid rows don't consume budget and aren't "out of budget" - they keep
+    // their own status until the operator fixes them (then allocation re-runs).
+    if (row.status !== ROW_STATUS.READY) {
+      out.set(row.rowKey, { segments: [], outOfBudget: 0, unresolved: true });
+      continue;
+    }
+    let wanted = nis(row.fields.amount);
+    if (wanted <= 0) {
+      out.set(row.rowKey, { segments: [], outOfBudget: 0 });
+      continue;
+    }
+    const segments = [];
+    for (const source of row.fields.budgetSourceList || []) {
+      if (wanted <= 0) break;
+      const avail = pool[source];
+      if (avail === undefined) continue; // source not on the home-page table => treated as 0
+      const take = Math.min(wanted, Math.max(0, avail - 1)); // leave >= 1 NIS
+      if (take <= 0) continue;
+      pool[source] = avail - take;
+      wanted -= take;
+      segments.push({ source, amount: take });
+    }
+    out.set(row.rowKey, { segments, outOfBudget: wanted }); // leftover = out of budget
+  }
+  return out;
+}
+
+/**
+ * One row -> one or more fillable requests. Two-level split: the allocation (allocateSources)
+ * gives ordered funded segments {source, amount} plus an out-of-budget remainder; each segment
+ * is then split by the item's per-budget price cap (row.fields.itemMaxPrice) so no request
+ * exceeds it. Every request draws from exactly one source (fields.budgetSourceSearch), or is
+ * flagged out-of-budget (status OUT_OF_BUDGET, empty source so step 3 skips it).
+ *
+ * requestId is `${rowKey}::${source|'OOB'}:${segIdx}:${splitIdx}` - identity is pinned to
+ * (row, source, price-split position), NOT list position, because the split is now
+ * data-dependent on the remaining-balances snapshot. mergeRequestsOnReupload then preserves
+ * a chunk's progress only when that exact chunk of work reproduces, and correctly drops it
+ * when a segment changes (instead of copying stale steps onto a differently-sized request).
+ */
+export function buildRequests(row, allocation) {
+  const alloc = allocation?.get(row.rowKey) || {
+    segments: [],
+    outOfBudget: row.status === ROW_STATUS.READY ? nis(row.fields.amount) : 0,
+    unresolved: row.status !== ROW_STATUS.READY,
+  };
+
+  const chunks = [];
+  alloc.segments.forEach((seg, segIdx) => {
+    splitAmount(seg.amount, row.fields.itemMaxPrice).forEach((amount, k) => {
+      chunks.push({ amount, source: seg.source, oob: false, segIdx, k });
+    });
+  });
+  if (alloc.outOfBudget > 0) {
+    splitAmount(alloc.outOfBudget, row.fields.itemMaxPrice).forEach((amount, k) => {
+      chunks.push({ amount, source: null, oob: true, segIdx: -1, k });
+    });
+  }
+  // Unresolved/invalid rows (or amount <= 0) produce no segments: keep one placeholder request
+  // carrying the original status so the operator still sees the row and can fix it.
+  if (!chunks.length) {
+    chunks.push({ amount: nis(row.fields.amount), source: null, oob: false, segIdx: -1, k: 0 });
+  }
+
+  return chunks.map((c, i) => ({
+    requestId: `${row.rowKey}::${c.oob ? OOB_SOURCE : c.source ?? 'NA'}:${c.segIdx}:${c.k}`,
     rowKey: row.rowKey,
     splitIndex: i,
     splitCount: chunks.length,
-    fields: { ...row.fields, amount: String(amount) },
-    status: row.status,
+    fields: { ...row.fields, amount: String(c.amount), budgetSourceSearch: c.source || '' },
+    sourceLabel: c.source || null,
+    outOfBudget: c.oob,
+    status: c.oob ? ROW_STATUS.OUT_OF_BUDGET : row.status,
     errors: row.errors,
     steps: { 1: STEP_STATUS.PENDING, 2: STEP_STATUS.PENDING, 3: STEP_STATUS.PENDING },
   }));
 }
 
 /**
- * Builds the full request list for a set of built rows: every row's primary request
- * (chunk ::0) in original row order first, then all overflow chunks (::1, ::2, ...)
- * appended at the end - so a split adds "the same row again" at the end of the table,
- * rather than interleaving.
+ * Builds the full request list for a set of built rows, given the allocation. Ordering:
+ * each row's primary funded request in row order first, then funded overflow chunks, then
+ * ALL out-of-budget requests last - so actionable rows stay on top. Safe to reorder because
+ * requestId identity is independent of list position.
  */
-export function buildAllRequests(rows) {
-  const perRow = rows.map(buildRequests);
-  const primary = perRow.map((reqs) => reqs[0]).filter(Boolean);
-  const overflow = perRow.flatMap((reqs) => reqs.slice(1));
-  return [...primary, ...overflow];
+export function buildAllRequests(rows, allocation) {
+  const perRow = rows.map((r) => buildRequests(r, allocation));
+  const primary = [];
+  const overflow = [];
+  const oob = [];
+  for (const reqs of perRow) {
+    const funded = reqs.filter((r) => !r.outOfBudget);
+    oob.push(...reqs.filter((r) => r.outOfBudget));
+    if (funded.length) {
+      primary.push(funded[0]);
+      overflow.push(...funded.slice(1));
+    }
+  }
+  return [...primary, ...overflow, ...oob];
 }
 
 /** Matches rebuilt rows against the previous upload by rowKey (which is file-scoped). */

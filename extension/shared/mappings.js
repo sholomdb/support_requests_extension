@@ -68,19 +68,24 @@ export async function saveMapping(type, excelValue, siteValue, context = {}, ext
   const key = mappingKey(type, excelValue, context);
   const all = await getAllMappings();
   if (!all[type]) all[type] = {};
+  // budgetSource resolves to an ordered *priority list* of sources (pass extra.siteValues);
+  // every other type stays single-valued. siteValue mirrors the first entry for back-compat.
+  const siteValues = extra.siteValues?.length ? extra.siteValues : undefined;
+  const primary = siteValues ? siteValues[0] : siteValue;
   all[type][key] = {
     excelValue: normalizeText(excelValue),
-    siteValue,
+    siteValue: primary,
+    ...(siteValues ? { siteValues } : {}),
     context,
     labelIndex: extra.labelIndex,
-    selector: extra.selector ?? (type === MAP_TYPES.item ? siteValue : undefined),
+    selector: extra.selector ?? (type === MAP_TYPES.item ? primary : undefined),
     updatedAt: new Date().toISOString(),
   };
   await chrome.storage.local.set({ valueMappings: all });
   // Every chosen site value becomes a future suggestion for this type - this is what
   // makes item/budgetSource (which have no hardcoded picklist) behave categorically
   // over time, same as city/budgetType/etc.
-  await addCategory(type, siteValue);
+  for (const v of siteValues || [siteValue]) await addCategory(type, v);
   return all[type][key];
 }
 
@@ -98,7 +103,14 @@ export async function resolveMapping(type, excelValue, context = {}) {
   const stored = await getAllMappings();
   const userMap = stored[type]?.[key];
   if (userMap?.siteValue !== undefined) {
-    return { siteValue: userMap.siteValue, labelIndex: userMap.labelIndex, selector: userMap.selector, fromUser: true };
+    return {
+      siteValue: userMap.siteValue,
+      // Ordered source list for budgetSource; legacy single-value entries read as a 1-item list.
+      siteValues: userMap.siteValues ?? [userMap.siteValue],
+      labelIndex: userMap.labelIndex,
+      selector: userMap.selector,
+      fromUser: true,
+    };
   }
 
   const seeds = DEFAULT_SEEDS[type] || {};

@@ -1,18 +1,25 @@
 import { parseExcelBuffer } from '../shared/excel-parser.js';
 import { loadSettings, findCityLoginId, SITE } from '../shared/config.js';
-import { getSession, saveSession, setStepStatus, isRequestDone } from '../shared/storage.js';
+import {
+  getSession,
+  saveSession,
+  setStepStatus,
+  isRequestDone,
+  getBudgetSourceRemaining,
+} from '../shared/storage.js';
 import { formatCurrency } from '../shared/utils.js';
 import {
   collectMappingQueue,
   buildRow,
   buildAllRequests,
+  allocateSources,
   mergeRowsOnReupload,
   mergeRequestsOnReupload,
   fileIdOf,
   ROW_STATUS,
   STEP_STATUS,
 } from '../shared/pipeline.js';
-import { saveMapping } from '../shared/mappings.js';
+import { saveMapping, MAP_TYPES } from '../shared/mappings.js';
 
 let settings = null;
 let session = null;
@@ -30,6 +37,8 @@ function matchesFilter(request) {
       return [1, 2, 3].some((s) => request.steps[s] === STEP_STATUS.FAILED);
     case 'needsfix':
       return request.status !== ROW_STATUS.READY;
+    case 'outofbudget':
+      return request.status === ROW_STATUS.OUT_OF_BUDGET;
     default:
       return true;
   }
@@ -37,6 +46,8 @@ function matchesFilter(request) {
 let pendingMapping = null;
 let mappingQueue = [];
 let mappingResolveCallback = null;
+// Ordered budget-source list being built in the mapping prompt (budgetSource type only).
+let sourceListDraft = [];
 let lastWorkingFrameId = null;
 
 const STEP_PAGES = { 1: 'MUTAV', 2: 'CATALOG', 3: 'WhoHowM' };
@@ -121,6 +132,7 @@ async function init() {
   $('saveMappingBtn').addEventListener('click', saveMappingAndContinue);
   $('cancelMappingBtn').addEventListener('click', skipMappingAndContinue);
   $('mappingSiteValue').addEventListener('change', onMappingSiteValueChange);
+  $('mappingAddSourceBtn').addEventListener('click', addSourceToList);
   $('fixMappingsBtn').addEventListener('click', fixMappings);
   $('exportBtn').addEventListener('click', exportSessionFile);
   $('rowFilter').addEventListener('change', (e) => {
@@ -170,7 +182,12 @@ function showNextQueueItem() {
 async function finalizeUpload(parsed, fileId, previousSession) {
   const { resolved } = await collectMappingQueue(parsed.rows, fileId, settings);
   const builtRows = parsed.rows.map((r) => buildRow(r, resolved, fileId));
-  let requests = buildAllRequests(builtRows);
+  // Plan which budget source funds each request, drawing down a snapshot of per-source
+  // remaining balances (assumes every row succeeds). builtRows are in Excel order, which
+  // is the allocator's consumption order.
+  const remainingSnapshot = await getBudgetSourceRemaining();
+  const allocation = allocateSources(builtRows, remainingSnapshot);
+  let requests = buildAllRequests(builtRows, allocation);
   let droppedCount = 0;
 
   if (previousSession?.parsedFile?.rows) {
@@ -183,7 +200,7 @@ async function finalizeUpload(parsed, fileId, previousSession) {
 
   const sameFile = previousSession?.parsedFile?.fileId === fileId;
   const newSession = {
-    parsedFile: { ...parsed, fileId, rows: builtRows },
+    parsedFile: { ...parsed, fileId, rows: builtRows, remainingSnapshot },
     requests,
     currentIndex: sameFile ? Math.min(previousSession.currentIndex ?? 0, requests.length - 1) : 0,
     log: previousSession?.log || [],
@@ -289,10 +306,14 @@ function showFileUI(sess) {
 
   const needsMapping = sess.requests.filter((r) => r.status === ROW_STATUS.NEEDS_MAPPING).length;
   const invalid = sess.requests.filter((r) => r.status === ROW_STATUS.INVALID).length;
+  const outOfBudget = sess.requests.filter((r) => r.status === ROW_STATUS.OUT_OF_BUDGET).length;
+  const issues = [
+    invalid ? `${invalid} לא תקינות` : '',
+    needsMapping ? `${needsMapping} דורשות מיפוי` : '',
+    outOfBudget ? `${outOfBudget} חורגות מתקציב` : '',
+  ].filter(Boolean);
   $('pipelineStatus').textContent =
-    needsMapping || invalid ?
-      `⚠ ${invalid} שורות לא תקינות, ${needsMapping} דורשות מיפוי`
-    : '✓ כל השורות מוכנות למילוי';
+    issues.length ? `⚠ ${issues.join(', ')}` : '✓ כל השורות מוכנות למילוי';
 
   const city = parsed.city;
   $('loginId').textContent = findCityLoginId(settings.cities, city) || '(not set – open Settings)';
@@ -314,6 +335,7 @@ function showCurrentRow() {
     📞 ${f.mobilePhone || f.homePhone || ''} | 🎂 ${f.birthDate || ''} | ${f.maritalStatus || ''}<br>
     📍 ${f.street || ''} ${f.building || ''}, ${f.settlement || f.citySearch || ''}<br>
     <strong>Type:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
+    <strong>מקור תקציב:</strong> ${request.outOfBudget ? '⚠ חורג מתקציב' : request.sourceLabel || '—'}<br>
     <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
   `;
@@ -335,12 +357,18 @@ function renderRowList() {
       .map((s) => (request.steps[s] === STEP_STATUS.FILLED ? '●' : request.steps[s] === STEP_STATUS.FAILED ? '✗' : '○'))
       .join('');
     const stepFailed = [1, 2, 3].some((s) => request.steps[s] === STEP_STATUS.FAILED);
-    // Show "חלק k/n" when a row was split over the item's price limit.
+    // Show "חלק k/n" when a row was split (over the item price limit or across budget sources).
     const splitTag = request.splitCount > 1 ? ` (חלק ${request.splitIndex + 1}/${request.splitCount})` : '';
+    // The budget source funding this request (or an out-of-budget marker).
+    const sourceTag =
+      request.outOfBudget ? ' <span class="src-tag oob">חורג מתקציב</span>'
+      : request.sourceLabel ? ` <span class="src-tag">${request.sourceLabel}</span>`
+      : '';
     li.innerHTML =
-      `${i + 1}. ${f.firstName || ''} ${f.lastName || ''} – ${formatCurrency(Number(f.amount) || 0)} ₪${splitTag} [${stepGlyphs}]` +
+      `${i + 1}. ${f.firstName || ''} ${f.lastName || ''} – ${formatCurrency(Number(f.amount) || 0)} ₪${splitTag}${sourceTag} [${stepGlyphs}]` +
       (request.errors?.length ? `<span class="row-error">${request.errors[0].reason}</span>` : '');
     if (isRequestDone(request)) li.classList.add('done');
+    else if (request.status === ROW_STATUS.OUT_OF_BUDGET) li.classList.add('out-of-budget');
     else if (request.status === ROW_STATUS.INVALID) li.classList.add('invalid');
     else if (request.status === ROW_STATUS.NEEDS_MAPPING) li.classList.add('needs-mapping');
     else if (stepFailed) li.classList.add('step-failed');
@@ -649,12 +677,16 @@ function showMappingPrompt(item) {
   $('mappingExcelValue').textContent = item.excelValue;
   $('mappingAffectedCount').textContent = String(item.affectedRowKeys?.length ?? 0);
 
+  const isSourceList = item.type === MAP_TYPES.budgetSource;
   const select = $('mappingSiteValue');
   const textInput = $('mappingSiteValueText');
   select.innerHTML = '';
   textInput.value = '';
   const suggestions = item.suggestions || [];
-  if (suggestions.length) {
+
+  // budgetSource always shows the picker (so the operator can build/extend the list even
+  // when there are no suggestions yet); other types keep the plain select-or-text behavior.
+  if (suggestions.length || isSourceList) {
     select.classList.remove('hidden');
     textInput.classList.add('hidden');
     suggestions.forEach((s) => {
@@ -668,10 +700,34 @@ function showMappingPrompt(item) {
     addOpt.value = ADD_CATEGORY_OPTION;
     addOpt.textContent = '➕ הוסף קטגוריה חדשה…';
     select.appendChild(addOpt);
+    if (!suggestions.length) {
+      // Only the add-new option exists -> drop straight into free-text entry.
+      select.value = ADD_CATEGORY_OPTION;
+      textInput.classList.remove('hidden');
+    }
   } else {
     select.classList.add('hidden');
     textInput.classList.remove('hidden');
   }
+
+  // Ordered priority-list editor: budgetSource only.
+  const wrap = $('mappingSourceListWrap');
+  sourceListDraft = [];
+  if (isSourceList) {
+    wrap.classList.remove('hidden');
+    renderSourceListDraft();
+  } else {
+    wrap.classList.add('hidden');
+  }
+}
+
+/** Reads whatever the picker currently offers as a value (dropdown selection, or the
+ * free-text input when "add new category" is active). Returns '' if nothing usable. */
+function currentPickerValue() {
+  const textInput = $('mappingSiteValueText');
+  const usingText = !textInput.classList.contains('hidden');
+  const value = usingText ? textInput.value.trim() : $('mappingSiteValue').value;
+  return value === ADD_CATEGORY_OPTION ? '' : value;
 }
 
 /** When "add new category" is picked in the dropdown, reveal the free-text input so
@@ -687,6 +743,57 @@ function onMappingSiteValueChange() {
   }
 }
 
+function mkSourceBtn(text, onClick, disabled) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn btn-sm source-btn';
+  b.textContent = text;
+  if (disabled) b.disabled = true;
+  else b.addEventListener('click', onClick);
+  return b;
+}
+
+function renderSourceListDraft() {
+  const ol = $('mappingSourceList');
+  ol.innerHTML = '';
+  sourceListDraft.forEach((src, i) => {
+    const li = document.createElement('li');
+    li.className = 'source-list-item';
+    const name = document.createElement('span');
+    name.className = 'source-name';
+    name.textContent = `${i + 1}. ${src}`;
+    const up = mkSourceBtn('↑', () => moveSource(i, -1), i === 0);
+    const down = mkSourceBtn('↓', () => moveSource(i, 1), i === sourceListDraft.length - 1);
+    const rm = mkSourceBtn('✕', () => {
+      sourceListDraft.splice(i, 1);
+      renderSourceListDraft();
+    });
+    li.append(name, up, down, rm);
+    ol.appendChild(li);
+  });
+}
+
+function moveSource(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= sourceListDraft.length) return;
+  [sourceListDraft[i], sourceListDraft[j]] = [sourceListDraft[j], sourceListDraft[i]];
+  renderSourceListDraft();
+}
+
+/** Appends the picker's current value to the ordered list (deduped, case-insensitive). */
+function addSourceToList() {
+  const value = currentPickerValue();
+  if (!value) {
+    alert('בחר או הקלד מקור תקציב');
+    return;
+  }
+  if (!sourceListDraft.some((s) => s.toLowerCase() === value.toLowerCase())) {
+    sourceListDraft.push(value);
+  }
+  renderSourceListDraft();
+  $('mappingSiteValueText').value = '';
+}
+
 function hideMappingPrompt() {
   pendingMapping = null;
   $('mappingSection').classList.add('hidden');
@@ -694,13 +801,35 @@ function hideMappingPrompt() {
 
 async function saveMappingAndContinue() {
   if (!pendingMapping) return;
+
+  // budgetSource resolves to an ordered priority list. Anything left unadded in the picker
+  // is folded in so the operator doesn't lose a value they typed but forgot to "+ הוסף".
+  if (pendingMapping.type === MAP_TYPES.budgetSource) {
+    const pending = currentPickerValue();
+    if (pending && !sourceListDraft.some((s) => s.toLowerCase() === pending.toLowerCase())) {
+      sourceListDraft.push(pending);
+    }
+    if (!sourceListDraft.length) {
+      alert('הוסף לפחות מקור תקציב אחד');
+      return;
+    }
+    await saveMapping(
+      pendingMapping.type,
+      pendingMapping.excelValue,
+      sourceListDraft[0],
+      pendingMapping.context || {},
+      { siteValues: [...sourceListDraft] }
+    );
+    log(`נשמר מיפוי מקורות: ${pendingMapping.excelValue} → ${sourceListDraft.join(' › ')}`);
+    showNextQueueItem();
+    return;
+  }
+
   // Use the free-text input whenever it's showing: either there were no suggestions,
   // or the operator picked "add new category" from the dropdown.
-  const textInput = $('mappingSiteValueText');
-  const usingText = !textInput.classList.contains('hidden');
-  const siteValue = usingText ? textInput.value.trim() : $('mappingSiteValue').value;
+  const siteValue = currentPickerValue();
 
-  if (!siteValue || siteValue === ADD_CATEGORY_OPTION) {
+  if (!siteValue) {
     alert('Enter a site value');
     return;
   }
