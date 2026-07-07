@@ -7,7 +7,7 @@
  */
 import { normalizeText, normalizeIdNumber, normalizeBirthDate, isValidBirthDate } from './utils.js';
 import { getCitySiteSearch, isMatehBinyamin, CONSTANTS } from './config.js';
-import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice } from './mappings.js';
+import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice, getAllMappings } from './mappings.js';
 import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.js';
 import {
   inferFamilyClassification,
@@ -142,12 +142,17 @@ const FIELD_PIPELINE = [
     key: 'budgetSource',
     step: 3,
     mapType: MAP_TYPES.budgetSource,
-    source: (raw) => `${raw.budgetType}::${raw.city}`,
-    context: (raw) => ({ budgetType: raw.budgetType, city: raw.city }),
+    // Config-only: never prompted during upload. Resolved from the Settings-configured list
+    // for (resolved budget label, city). Keyed on fields.budgetSiteValue, which the earlier
+    // budgetType field has already set by the time this field runs.
+    configOnly: true,
+    source: (raw, fields) => fields?.budgetSiteValue || '',
+    context: (raw, fields) => ({ budgetLabel: fields?.budgetSiteValue, city: raw.city }),
     // Resolves to an ordered priority list; the single per-request budgetSourceSearch is
     // assigned later by the allocator/request-builder, not here.
     outputAs: (entry) => ({ budgetSourceList: entry?.siteValues ?? (entry?.siteValue ? [entry.siteValue] : []) }),
-    validate: required('מקור תקציב לא נפתר'),
+    validate: (v, raw, fields) =>
+      v ? null : `מקור תקציב לא הוגדר בהגדרות עבור "${fields?.budgetSiteValue || raw.budgetType}" ב${raw.city}`,
   },
   { key: 'amount', step: 3, fix: (raw) => String(raw.amount), validate: (v) => (Number(v) > 0 ? null : 'סכום לא תקין') },
   { key: 'reason', step: 3, fix: (raw) => normalizeText(raw.justification) },
@@ -155,7 +160,8 @@ const FIELD_PIPELINE = [
 ];
 
 function mapFields() {
-  return FIELD_PIPELINE.filter((f) => f.mapType);
+  // configOnly fields (budgetSource) are resolved from Settings config, never prompted.
+  return FIELD_PIPELINE.filter((f) => f.mapType && !f.configOnly);
 }
 
 /**
@@ -212,6 +218,17 @@ export async function collectMappingQueue(rawRows, fileId, settings) {
     }
   }
 
+  // budgetSource is config-only: load every configured (label::city) list into the resolved
+  // cache so buildRow can look it up synchronously. Unconfigured combos simply won't be found
+  // and buildRow fails that row with a "configure in Settings" error.
+  const bsConfig = (await getAllMappings())[MAP_TYPES.budgetSource] || {};
+  for (const [key, entry] of Object.entries(bsConfig)) {
+    resolved.set(`${MAP_TYPES.budgetSource}::${key}`, {
+      siteValue: entry.siteValue,
+      siteValues: entry.siteValues ?? (entry.siteValue ? [entry.siteValue] : []),
+    });
+  }
+
   return { resolved, queue: [...queueMap.values()] };
 }
 
@@ -230,15 +247,17 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     let outputSource;
 
     if (field.mapType) {
-      const excelValue = field.source(rawRow);
-      const context = field.context ? field.context(rawRow) : {};
+      const excelValue = field.source(rawRow, fields);
+      const context = field.context ? field.context(rawRow, fields) : {};
       const key = mappingKey(field.mapType, excelValue, context);
       const entry = resolvedMap.get(`${field.mapType}::${key}`);
       if (entry) {
         value = entry.siteValue;
         outputSource = entry;
       } else {
-        hasNeedsMapping = true;
+        // configOnly fields (budgetSource) aren't prompted - a miss is a hard config error
+        // (INVALID via validate), not a NEEDS_MAPPING the operator resolves in a prompt.
+        if (!field.configOnly) hasNeedsMapping = true;
         value = '';
         outputSource = { siteValue: '', labelIndex: undefined, selector: undefined };
       }
@@ -251,7 +270,7 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     Object.assign(fields, outputAs(outputSource, rawRow));
 
     if (field.validate) {
-      const reason = field.validate(value, rawRow);
+      const reason = field.validate(value, rawRow, fields);
       if (reason) errors.push({ field: field.key, reason });
     }
   }

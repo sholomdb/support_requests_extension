@@ -48,7 +48,10 @@ export function mappingKey(type, excelValue, context = {}) {
   const val = normalizeText(excelValue);
   if (type === MAP_TYPES.budgetSource) {
     const city = normalizeCity(context.city || '');
-    const budget = normalizeText(context.budgetType || '');
+    // Keyed by the resolved *site budget label* (one of BUDGET_LABELS) + city, so a
+    // Settings-configured combo matches a file row deterministically. context.budgetType is
+    // accepted as a legacy fallback for entries created before the label re-key/migration.
+    const budget = normalizeText(context.budgetLabel || context.budgetType || '');
     return `${budget}::${city}`;
   }
   if (type === MAP_TYPES.familyClassification) {
@@ -68,9 +71,15 @@ export async function saveMapping(type, excelValue, siteValue, context = {}, ext
   const key = mappingKey(type, excelValue, context);
   const all = await getAllMappings();
   if (!all[type]) all[type] = {};
+  const existing = all[type][key];
   // budgetSource resolves to an ordered *priority list* of sources (pass extra.siteValues);
   // every other type stays single-valued. siteValue mirrors the first entry for back-compat.
-  const siteValues = extra.siteValues?.length ? extra.siteValues : undefined;
+  let siteValues = extra.siteValues?.length ? extra.siteValues : undefined;
+  // Never silently drop an existing budgetSource list when a caller saves a single value
+  // (e.g. an edit via the generic mapping table) - keep the extra sources.
+  if (!siteValues && type === MAP_TYPES.budgetSource && existing?.siteValues?.length) {
+    siteValues = existing.siteValues;
+  }
   const primary = siteValues ? siteValues[0] : siteValue;
   all[type][key] = {
     excelValue: normalizeText(excelValue),
@@ -217,8 +226,51 @@ export async function getItemMaxPrice(itemName) {
   return stored[name]?.maxPrice ?? null;
 }
 
-export function buildBudgetSourceKey(budgetType, city) {
-  return mappingKey(MAP_TYPES.budgetSource, budgetType, { budgetType, city });
+export function buildBudgetSourceKey(budgetLabel, city) {
+  return mappingKey(MAP_TYPES.budgetSource, budgetLabel, { budgetLabel, city });
+}
+
+/**
+ * Reads the ordered budget-source list configured for a (site budget label, city) combo.
+ * Returns [] when nothing is configured - the caller (buildRow) then fails the row and
+ * points the operator to Settings. This is the sole resolution path now that budgetSource
+ * is configured up-front instead of prompted during upload.
+ */
+export async function getBudgetSourceList(budgetLabel, city) {
+  const all = await getAllMappings();
+  const key = buildBudgetSourceKey(budgetLabel, city);
+  const entry = all[MAP_TYPES.budgetSource]?.[key];
+  if (!entry) return [];
+  return entry.siteValues?.length ? entry.siteValues : entry.siteValue ? [entry.siteValue] : [];
+}
+
+/**
+ * One-time migration: budgetSource lists used to be keyed by the raw Excel budget text
+ * (context.budgetType); they're now keyed by the resolved site budget label. Re-key any
+ * legacy entries by resolving their budgetType, so existing lists survive the switch.
+ * Idempotent - entries already carrying a budgetLabel context are left untouched.
+ */
+export async function migrateBudgetSourceToLabelKeys() {
+  const all = await getAllMappings();
+  const bs = all[MAP_TYPES.budgetSource];
+  if (!bs) return { migrated: 0 };
+  let migrated = 0;
+  for (const [oldKey, entry] of Object.entries(bs)) {
+    if (entry.context?.budgetLabel) continue; // already label-keyed
+    const rawBudget = entry.context?.budgetType;
+    const city = entry.context?.city;
+    if (!rawBudget || !city) continue;
+    const resolvedBudget = await resolveMapping(MAP_TYPES.budgetType, rawBudget, {});
+    const label = resolvedBudget?.siteValue;
+    if (!label) continue; // can't determine the label - leave as-is (row will fail -> reconfigure)
+    const newKey = buildBudgetSourceKey(label, city);
+    const migratedEntry = { ...entry, context: { budgetLabel: label, city }, excelValue: `${label}::${city}` };
+    delete bs[oldKey];
+    bs[newKey] = { ...bs[newKey], ...migratedEntry }; // merge if a label-keyed entry already exists
+    migrated += 1;
+  }
+  if (migrated) await chrome.storage.local.set({ valueMappings: all });
+  return { migrated };
 }
 
 /** All operator-taught data kept in chrome.storage.local (mappings, categories,

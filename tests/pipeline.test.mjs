@@ -68,11 +68,12 @@ function fullyResolvedMap(raw) {
     ),
     resolvedEntry(MAP_TYPES.budgetType, raw.budgetType, {}, { siteValue: 'סיוע חירום למשפחות', labelIndex: 1 }),
     resolvedEntry(MAP_TYPES.item, raw.item, {}, { siteValue: raw.item, selector: '#item1' }),
+    // budgetSource is config-only and keyed by the resolved budget label + city.
     resolvedEntry(
       MAP_TYPES.budgetSource,
-      `${raw.budgetType}::${raw.city}`,
-      { budgetType: raw.budgetType, city: raw.city },
-      { siteValue: 'מקור תקציב לדוגמה' }
+      'סיוע חירום למשפחות::' + raw.city,
+      { budgetLabel: 'סיוע חירום למשפחות', city: raw.city },
+      { siteValue: 'מקור תקציב לדוגמה', siteValues: ['מקור תקציב לדוגמה'] }
     ),
   ]);
 }
@@ -121,6 +122,21 @@ describe('buildRow', () => {
     // assigned later by the allocator, not by buildRow.
     assert.deepEqual(row.fields.budgetSourceList, ['מקור תקציב לדוגמה']);
     assert.equal(row.fields.budgetSourceSearch, undefined);
+  });
+
+  test('a row whose budget-source combo is unconfigured is INVALID (config-only, not prompted)', () => {
+    const raw = makeRawRow();
+    const map = fullyResolvedMap(raw);
+    // Drop the budgetSource config for this (label, city) combo.
+    const bsCacheKey = `${MAP_TYPES.budgetSource}::${mappingKey(MAP_TYPES.budgetSource, '', {
+      budgetLabel: 'סיוע חירום למשפחות',
+      city: raw.city,
+    })}`;
+    map.delete(bsCacheKey);
+    const row = buildRow(raw, map, FILE_ID);
+    assert.equal(row.status, ROW_STATUS.INVALID); // not NEEDS_MAPPING - it's a config error
+    assert.ok(row.errors.some((e) => e.field === 'budgetSource'));
+    assert.deepEqual(row.fields.budgetSourceList, []);
   });
 
   test('an unresolved categorical field marks the row needs-mapping, not just invalid', () => {
@@ -344,10 +360,11 @@ describe('allocateSources', () => {
   const rowWithSources = (sources, amount, over = {}) => {
     const raw = makeRawRow({ amount, ...over }); // default item מקרר (limit 4500) => no item-cap split
     const map = fullyResolvedMap(raw);
+    // Override the budgetSource list, keyed by the resolved budget label + city (as buildRow looks it up).
     const [key] = resolvedEntry(
       MAP_TYPES.budgetSource,
-      `${raw.budgetType}::${raw.city}`,
-      { budgetType: raw.budgetType, city: raw.city },
+      'סיוע חירום למשפחות::' + raw.city,
+      { budgetLabel: 'סיוע חירום למשפחות', city: raw.city },
       {}
     );
     map.set(key, { siteValue: sources[0], siteValues: sources });
@@ -406,8 +423,8 @@ describe('allocateSources', () => {
     const badMap = fullyResolvedMap(badRaw);
     const [key] = resolvedEntry(
       MAP_TYPES.budgetSource,
-      `${badRaw.budgetType}::${badRaw.city}`,
-      { budgetType: badRaw.budgetType, city: badRaw.city },
+      'סיוע חירום למשפחות::' + badRaw.city,
+      { budgetLabel: 'סיוע חירום למשפחות', city: badRaw.city },
       {}
     );
     badMap.set(key, { siteValue: 'A', siteValues: ['A'] });

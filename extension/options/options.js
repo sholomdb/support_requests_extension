@@ -1,4 +1,4 @@
-import { loadSettings, saveSettings } from '../shared/config.js';
+import { loadSettings, saveSettings, BUDGET_LABELS } from '../shared/config.js';
 import {
   listMappingsFlat,
   deleteMapping,
@@ -11,6 +11,8 @@ import {
   setItemInfo,
   exportMappingData,
   importMappingData,
+  getBudgetSourceList,
+  migrateBudgetSourceToLabelKeys,
 } from '../shared/mappings.js';
 import { getBudgetSourceRemaining, saveBudgetSourceRemaining } from '../shared/storage.js';
 
@@ -38,6 +40,7 @@ let settings = null;
 
 async function init() {
   settings = await loadSettings();
+  await migrateBudgetSourceToLabelKeys();
   renderCities();
   await renderCategories();
   await renderBudgetSourceLists();
@@ -77,19 +80,16 @@ function miniBtn(text, onClick) {
   return b;
 }
 
-/** One editable ordered budget-source list, keyed by its budgetType::city mapping. */
-function createBudgetSourceListBlock(row) {
-  const list =
-    row.siteValues && row.siteValues.length ? [...row.siteValues]
-    : row.siteValue ? [row.siteValue]
-    : [];
+/** One editable ordered budget-source list for a (site budget label, city) combo. */
+function createBudgetSourceListBlock(budgetLabel, city, initialList) {
+  const list = [...initialList];
 
   const block = document.createElement('div');
   block.className = 'bs-block';
 
-  const ctx = row.context || {};
-  const heading = document.createElement('h3');
-  heading.textContent = [ctx.budgetType, ctx.city].filter(Boolean).join(' · ') || row.excelValue || row.key;
+  const heading = document.createElement('h4');
+  heading.className = 'bs-combo-heading';
+  heading.textContent = budgetLabel;
 
   const ol = document.createElement('ol');
   ol.className = 'source-list';
@@ -148,15 +148,17 @@ function createBudgetSourceListBlock(row) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addBtn.click();
   });
-  const saveBtn = miniBtn('שמור רשימה', async () => {
-    if (!list.length) {
-      status.textContent = 'הוסף לפחות מקור אחד';
-      return;
+  const context = { budgetLabel, city };
+  const excelValue = `${budgetLabel}::${city}`;
+  const saveBtn = miniBtn('שמור', async () => {
+    if (list.length) {
+      await saveMapping(MAP_TYPES.budgetSource, excelValue, list[0], context, { siteValues: [...list] });
+      status.textContent = '✓ נשמר';
+    } else {
+      // Empty list => this combo is unconfigured; remove any stored mapping.
+      await deleteMapping(MAP_TYPES.budgetSource, excelValue, context);
+      status.textContent = 'נמחק';
     }
-    await saveMapping(MAP_TYPES.budgetSource, row.excelValue || row.key, list[0], row.context || {}, {
-      siteValues: [...list],
-    });
-    status.textContent = '✓ נשמר';
   });
   saveBtn.classList.add('primary');
   addWrap.append(input, addBtn, saveBtn, status);
@@ -166,17 +168,33 @@ function createBudgetSourceListBlock(row) {
   return block;
 }
 
+/** Pre-lists every (city × budget label) combo with its ordered source-list editor,
+ * grouped by city and prefilled from the stored config. This is the sole place budget
+ * sources are configured now that upload no longer prompts for them. */
 async function renderBudgetSourceLists() {
   const container = document.getElementById('budgetSourceListsContainer');
   if (!container) return;
   container.innerHTML = '';
-  const rows = (await listMappingsFlat()).filter((r) => r.type === MAP_TYPES.budgetSource);
-  if (!rows.length) {
-    container.innerHTML =
-      '<p class="hint">אין רשימות עדיין – הן נוצרות כשממפים מקור תקציב בזמן טעינת קובץ.</p>';
+
+  const cities = Object.keys(settings.cities || {});
+  const labels = Object.values(BUDGET_LABELS);
+  if (!cities.length) {
+    container.innerHTML = '<p class="hint">הוסף ערים בראש העמוד כדי להגדיר מקורות תקציב.</p>';
     return;
   }
-  for (const row of rows) container.appendChild(createBudgetSourceListBlock(row));
+
+  for (const city of cities) {
+    const group = document.createElement('div');
+    group.className = 'bs-city-group';
+    const cityHeading = document.createElement('h3');
+    cityHeading.textContent = city;
+    group.appendChild(cityHeading);
+    for (const label of labels) {
+      const list = await getBudgetSourceList(label, city);
+      group.appendChild(createBudgetSourceListBlock(label, city, list));
+    }
+    container.appendChild(group);
+  }
 }
 
 async function renderBudgetBalances() {
@@ -294,7 +312,9 @@ async function renderCategories() {
 async function renderMappings() {
   const tbody = document.getElementById('mappingsBody');
   if (!tbody) return;
-  const rows = await listMappingsFlat();
+  // budgetSource is a priority *list* - edited only in its dedicated editor above, so it's
+  // excluded here (a single-value save from this table would drop the extra sources).
+  const rows = (await listMappingsFlat()).filter((r) => r.type !== MAP_TYPES.budgetSource);
   tbody.innerHTML = '';
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="5">אין מיפויים שמורים</td></tr>';
