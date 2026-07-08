@@ -46,6 +46,14 @@ describe('normalizeCity', () => {
   test('passes through unknown city names unchanged', () => {
     assert.equal(normalizeCity('עיר לא ידועה'), 'עיר לא ידועה');
   });
+  test('strips a municipality prefix, then maps to the canonical name', () => {
+    assert.equal(normalizeCity('עיריית בני ברק'), 'בני ברק');
+    assert.equal(normalizeCity('עירית ביתר'), 'ביתר עילית');
+    assert.equal(normalizeCity('מועצה מקומית מודיעין'), 'מודיעין עילית');
+  });
+  test('strips a municipality prefix even for cities without an alias', () => {
+    assert.equal(normalizeCity('עיריית פלונית'), 'פלונית');
+  });
 });
 
 describe('normalizeBirthDate', () => {
