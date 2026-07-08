@@ -76,14 +76,6 @@ export function normalizeIdNumber(id) {
   return digits.length < 9 ? digits.padStart(9, '0') : digits;
 }
 
-/** Strips a leading municipality prefix ("עיריית בני ברק" -> "בני ברק",
- * "מועצה מקומית X" -> "X") so a file's city matches the canonical city name. */
-function stripMunicipalityPrefix(value) {
-  return normalizeText(value)
-    .replace(/^(עיריית|עירית|ה?מועצה\s+ה?(?:מקומית|אזורית)|מ\.?\s*[מא]\.?)\s+/, '')
-    .trim();
-}
-
 export function normalizeCity(city) {
   const c = normalizeText(city);
   const aliases = {
@@ -114,13 +106,8 @@ export function normalizeCity(city) {
     'hebron': 'חברון',
     'מטה בנימין': 'מטה בנימין',
   };
-  const stripped = stripMunicipalityPrefix(c);
-  const lookups = [c, c.toLowerCase(), stripped, stripped.toLowerCase()];
-  for (const k of lookups) {
-    if (aliases[k]) return aliases[k];
-  }
-  // No alias match: still drop a municipality prefix so "עיריית X" collapses to "X".
-  return stripped || c;
+  const key = c.toLowerCase();
+  return aliases[c] || aliases[key] || c;
 }
 
 export function formatPhone(phone) {
