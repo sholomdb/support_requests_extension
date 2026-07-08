@@ -259,6 +259,22 @@ async function touchField(selector, label) {
   return { field: selector, ok: true, skipped: true, touched: true, value: '', label };
 }
 
+/** Re-runs the site's on-blur validation for an ALREADY-filled field by re-entering its
+ * current value and blurring again. Our fill fires input+change+blur in one tick, so the
+ * blur validates before React commits the new value - leaving the field flagged invalid
+ * even though the value shows. Called after a delay (value now committed), this second
+ * blur validates against the correct value and clears the error (mimics a manual retouch). */
+async function retouchField(selector) {
+  const el = querySelector(selector);
+  const input = el?.matches('input, textarea') ? el : el?.querySelector('input, textarea');
+  const target = input || el;
+  if (!target) return false;
+  target.focus?.();
+  setNativeValue(target, target.value ?? '');
+  target.blur?.();
+  return true;
+}
+
 async function clickButton(selector) {
   const el = querySelector(selector);
   if (!el) return false;
@@ -1129,6 +1145,10 @@ async function fillMutavDetails(fields, selectors, delayMs) {
       await sleep(delayMs);
     }
     results.push(await fillField(s.homePhone, fields.homePhone));
+    await sleep(delayMs);
+    // Re-validate the home field against its now-committed value (see retouchField) - the
+    // fill's immediate blur otherwise leaves it flagged invalid.
+    await retouchField(s.homePhone);
     await sleep(delayMs);
   }
 
