@@ -31,6 +31,39 @@ h3 {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
+/* Collapsible section header (native <details>/<summary>) */
+details.card > summary {
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+details.card > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Disclosure triangle: points sideways when closed, down when expanded */
+details.card > summary::before {
+  content: '▸';
+  font-size: 12px;
+  color: #888;
+  transition: transform 0.15s ease;
+}
+
+details.card[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* Space between the header and the section content when expanded */
+details.card[open] > summary {
+  margin-bottom: 12px;
+}
+
 .hint {
   color: #666;
   font-size: 13px;
