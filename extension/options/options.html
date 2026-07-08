@@ -8,23 +8,23 @@
 <body>
   <h1>הגדרות</h1>
 
-  <section class="card">
-    <h2>ערים ות.ז. התחברות</h2>
+  <details class="card">
+    <summary>ערים ות.ז. התחברות</summary>
     <p class="hint">לכל עיר – ת.ז. שבה אתה מתחבר לאתר (SMS יוזן ידנית)</p>
     <div id="citiesContainer"></div>
     <button class="btn" id="addCityBtn">+ הוסף עיר</button>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>כתובת האתר</h2>
+  <details class="card">
+    <summary>כתובת האתר</summary>
     <label>
       URL (לזיהוי)
       <input type="url" id="siteUrl" placeholder="https://..." />
     </label>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>כללי</h2>
+  <details class="card">
+    <summary>כללי</summary>
     <label>
       השהייה בין שדות (ms)
       <input type="number" id="fillDelayMs" value="400" min="0" max="2000" />
@@ -41,10 +41,10 @@
       המתנה מרבית למעבר בין דפים (ms)
       <input type="number" id="pageWaitMs" value="20000" min="2000" max="60000" />
     </label>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>ייבוא/ייצוא הגדרות</h2>
+  <details class="card">
+    <summary>ייבוא/ייצוא הגדרות</summary>
     <p class="hint">
       שמירת הערים וההגדרות הכלליות לקובץ JSON, וטעינתן חזרה (למשל על מחשב אחר,
       או כגיבוי). לא כולל selectors - אלה מוגדרים בקוד.
@@ -54,19 +54,19 @@
       <label class="btn" for="importSettingsInput">⬆ העלה הגדרות (JSON)</label>
       <input type="file" id="importSettingsInput" accept=".json" hidden />
     </div>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>קטגוריות (רשימות בחירה)</h2>
+  <details class="card">
+    <summary>קטגוריות (רשימות בחירה)</summary>
     <p class="hint">
       הערכים שיוצעו למפעיל כשנתקלים בערך לא ידוע. פריט ומקור תקציב מתחילים ריקים
       ומתמלאים אוטומטית בכל פעם שנבחר ערך חדש עבורם – אפשר גם להוסיף כאן מראש.
     </p>
     <div id="categoriesContainer"></div>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>רשימות מקורות תקציב (לפי עדיפות)</h2>
+  <details class="card">
+    <summary>רשימות מקורות תקציב (לפי עדיפות)</summary>
     <p class="hint">
       לכל צירוף של עיר + תקציב, סדר את מקורות התקציב לניצול. הראשון ינוצל קודם, וכשייגמר
       המערכת תעבור לבא אחריו. שורה בקובץ שהצירוף שלה לא הוגדר כאן תיכשל (לא תמולא) עד שתגדיר
@@ -74,19 +74,19 @@
     </p>
     <button class="btn" id="refreshBudgetSourcesBtn">רענן</button>
     <div id="budgetSourceListsContainer"></div>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>יתרות מקורות תקציב</h2>
+  <details class="card">
+    <summary>יתרות מקורות תקציב</summary>
     <p class="hint">
       היתרות שנקראו מטבלת הסעיפים בדף הבית (או שעודכנו כאן ידנית). משמשות לחלוקת הסכומים
       בין המקורות בעת טעינת קובץ. עדכון ערך נשמר מיד.
     </p>
     <div id="budgetBalancesContainer"></div>
-  </section>
+  </details>
 
-  <section class="card">
-    <h2>מיפוי ערכים (Excel → אתר)</h2>
+  <details class="card">
+    <summary>מיפוי ערכים (Excel → אתר)</summary>
     <p class="hint">מיפויים נשמרים אוטומטית כשהמפעיל בוחר ערך, וניתן לערוך כאן.</p>
     <button class="btn" id="refreshMappingsBtn">רענן</button>
     <table class="mappings-table">
@@ -101,7 +101,7 @@
       </thead>
       <tbody id="mappingsBody"></tbody>
     </table>
-  </section>
+  </details>
 
   <div class="actions">
     <button class="btn primary" id="saveBtn">שמור הגדרות</button>
