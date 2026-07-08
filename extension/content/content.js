@@ -259,19 +259,33 @@ async function touchField(selector, label) {
   return { field: selector, ok: true, skipped: true, touched: true, value: '', label };
 }
 
-/** Re-runs the site's on-blur validation for an ALREADY-filled field by re-entering its
- * current value and blurring again. Our fill fires input+change+blur in one tick, so the
- * blur validates before React commits the new value - leaving the field flagged invalid
- * even though the value shows. Called after a delay (value now committed), this second
- * blur validates against the correct value and clears the error (mimics a manual retouch). */
+/** Re-runs the site's on-blur validation for an ALREADY-filled field, mimicking a manual
+ * "click in / click out" retouch. React 17+ runs onBlur validation from the bubbling
+ * `focusout` event (delegated at the document root), NOT from a dispatched `blur`, and a
+ * real `element.blur()` only emits `focusout` when the page is the actively-focused document
+ * (it isn't while the extension popup is open). So we re-commit the value and dispatch a
+ * bubbling `focusout` explicitly, which React catches regardless of real focus. */
 async function retouchField(selector) {
   const el = querySelector(selector);
   const input = el?.matches('input, textarea') ? el : el?.querySelector('input, textarea');
   const target = input || el;
   if (!target) return false;
+
   target.focus?.();
-  setNativeValue(target, target.value ?? '');
+  target.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  const val = String(target.value ?? '');
+  try {
+    target.setSelectionRange?.(val.length, val.length); // place a caret at the end
+  } catch (e) {}
+
+  // Re-commit the current value so React's onChange state is up to date...
+  setNativeValue(target, val);
+  await sleep(50);
+
+  // ...then blur it. The explicit bubbling focusout is what actually triggers React's
+  // onBlur/validation here (a dispatched 'blur' does not).
   target.blur?.();
+  target.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
   return true;
 }
 
