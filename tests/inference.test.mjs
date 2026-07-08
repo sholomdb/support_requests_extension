@@ -87,6 +87,13 @@ describe('routePhone', () => {
       assert.equal(routePhone(p).value, p);
     }
   });
+  test('an 05 mobile with more than 10 digits is invalid -> constant home number', () => {
+    assert.deepEqual(routePhone('05012345678'), { field: 'homePhone', value: '020000000' });
+    assert.deepEqual(routePhone('0501234567890'), { field: 'homePhone', value: '020000000' });
+  });
+  test('any number longer than 10 digits falls back to the placeholder', () => {
+    assert.deepEqual(routePhone('031234567890'), { field: 'homePhone', value: '020000000' });
+  });
 });
 
 describe('normalizeHolocaust', () => {

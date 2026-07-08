@@ -121,8 +121,9 @@ const PLACEHOLDER_HOME_PHONE = '020000000';
  *
  * Excel often drops the leading zero (numbers stored numerically), so decide by
  * padding to the standard length first:
- *  - pad to 10 digits; if it then starts with "05" it's a mobile -> #e231, kept at
- *    10 digits (e.g. 501234567 -> 0501234567).
+ *  - pad to 10 digits; if it then starts with "05" AND has at most 10 digits it's a
+ *    mobile -> #e231, kept at 10 digits (e.g. 501234567 -> 0501234567). More than 10
+ *    digits is an invalid mobile and falls back to the constant home number.
  *  - otherwise it's a landline -> #e232, padded to 9 digits (NOT 10)
  *    (e.g. 21234567 -> 021234567). If the padded number doesn't start with a valid
  *    area code (02/03/04/08/09) - including a missing/garbage number - it's replaced
@@ -130,11 +131,16 @@ const PLACEHOLDER_HOME_PHONE = '020000000';
  */
 export function routePhone(phone) {
   const digits = String(phone ?? '').replace(/\D/g, '');
-  if (digits.padStart(10, '0').startsWith('05')) {
-    return { field: 'mobilePhone', value: digits.padStart(10, '0') };
+  const asMobile = digits.padStart(10, '0');
+  // A valid Israeli mobile is exactly 10 digits (05XXXXXXXX). More than 10 digits is an
+  // invalid mobile - fall back to the constant home number rather than filling it.
+  if (asMobile.startsWith('05') && digits.length <= 10) {
+    return { field: 'mobilePhone', value: asMobile };
   }
   let home = digits.padStart(9, '0');
-  if (!LANDLINE_PREFIXES.includes(home.slice(0, 2))) home = PLACEHOLDER_HOME_PHONE;
+  if (digits.length > 10 || !LANDLINE_PREFIXES.includes(home.slice(0, 2))) {
+    home = PLACEHOLDER_HOME_PHONE;
+  }
   return { field: 'homePhone', value: home };
 }
 
