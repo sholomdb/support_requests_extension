@@ -1051,28 +1051,36 @@ async function fillMutavDetails(fields, selectors, delayMs) {
   results.push({ field: 'mutavKnowledge', ok: mutavOk, label: 'מידע עבר עם המוטב', value: 'כן' });
   await sleep(delayMs);
 
-  const dropdownFields = [
+  const fillDropdowns = async (list) => {
+    for (const [key, val, label] of list) {
+      if (s[key] && val) {
+        const ok = await fillFormTitanDropdown(s[key], dropdownPreferredTexts(val));
+        results.push({ field: key, ok, label, value: val });
+        await sleep(delayMs);
+      }
+    }
+  };
+
+  // Fill up to and including marital status...
+  await fillDropdowns([
     ['gender', fields.gender, 'מגדר'],
     ['sector', fields.sector, 'מגזר'],
     ['ministryFileExists', fields.ministryFileExists, 'קובץ קיים'],
     ['maritalStatus', fields.maritalStatus, 'מצב משפחתי'],
-    ['holocaustSurvivor', fields.holocaustSurvivor, 'ניצול שואה'],
-    ['birthCountry', fields.birthCountry, 'ארץ לידה'],
-    ['familyClassification', fields.familyClassification, 'סיווג משפחה'],
-  ];
+  ]);
 
-  for (const [key, val, label] of dropdownFields) {
-    if (s[key] && val) {
-      const ok = await fillFormTitanDropdown(s[key], dropdownPreferredTexts(val));
-      results.push({ field: key, ok, label, value: val });
-      await sleep(delayMs);
-    }
-  }
-
+  // ...then family size (מספר נפשות) right after marital status, per operator request.
   if (s.householdSize && fields.householdSize) {
     results.push(await fillField(s.householdSize, fields.householdSize));
     await sleep(delayMs);
   }
+
+  // ...then the remaining dropdowns.
+  await fillDropdowns([
+    ['holocaustSurvivor', fields.holocaustSurvivor, 'ניצול שואה'],
+    ['birthCountry', fields.birthCountry, 'ארץ לידה'],
+    ['familyClassification', fields.familyClassification, 'סיווג משפחה'],
+  ]);
 
   results.push(
     isMuiDateField(s.birthDate) ?
