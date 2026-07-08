@@ -246,19 +246,6 @@ async function fillFieldIfEditable(selector, value, label, optional = false) {
   return { ...await fillField(selector, value), label: label || selector };
 }
 
-/** "Touches" a field (focus + set empty value + input/change/blur events) so the site's
- * validation marks it as visited. Used for the mobile phone field, which FormTitan flags
- * as invalid until interacted with, even when a home number is provided instead. */
-async function touchField(selector, label) {
-  const el = querySelector(selector);
-  const input = el?.matches('input, textarea') ? el : el?.querySelector('input, textarea');
-  const target = input || el;
-  if (!target) return { field: selector, ok: false, reason: 'element not found', label };
-  target.focus?.();
-  setNativeValue(target, '');
-  return { field: selector, ok: true, skipped: true, touched: true, value: '', label };
-}
-
 /** Re-runs the site's on-blur validation for an ALREADY-filled field, mimicking a manual
  * "click in / click out" retouch. React 17+ runs onBlur validation from the bubbling
  * `focusout` event (delegated at the document root), NOT from a dispatched `blur`, and a
@@ -1152,12 +1139,6 @@ async function fillMutavDetails(fields, selectors, delayMs) {
     await sleep(delayMs);
   }
   if (fields.homePhone && s.homePhone) {
-    // Site bug workaround: when only a home number is filled, the (empty) mobile field is
-    // flagged invalid unless it's "touched" first. Touch it with an empty value.
-    if (s.mobilePhone) {
-      results.push(await touchField(s.mobilePhone, 'נייד'));
-      await sleep(delayMs);
-    }
     results.push(await fillField(s.homePhone, fields.homePhone));
     await sleep(delayMs);
     // Re-validate the home field against its now-committed value (see retouchField) - the
