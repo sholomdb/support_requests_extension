@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "מזין בקשות סיוע",
   "description": "סיוע בהזנת בקשות סיוע מאקסל לאתר - עם מעקב יתרות לפי עיר",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel", "tabs"],
   "host_permissions": ["https://ifcjil.formtitan.com/*"],
   "background": {

@@ -148,6 +148,13 @@ const FIELD_PIPELINE = [
     configOnly: true,
     source: (raw, fields) => fields?.budgetSiteValue || '',
     context: (raw, fields) => ({ budgetLabel: fields?.budgetSiteValue, city: raw.city }),
+    // If the raw city doesn't match a configured combo, also try the operator's resolved
+    // city (citySearch) - so a mapped city variant (e.g. "עיריית בני ברק" -> "בני ברק")
+    // still finds its budget-source list.
+    altContexts: (raw, fields) =>
+      fields?.citySearch && fields.citySearch !== raw.city
+        ? [{ budgetLabel: fields?.budgetSiteValue, city: fields.citySearch }]
+        : [],
     // Resolves to an ordered priority list; the single per-request budgetSourceSearch is
     // assigned later by the allocator/request-builder, not here.
     outputAs: (entry) => ({ budgetSourceList: entry?.siteValues ?? (entry?.siteValue ? [entry.siteValue] : []) }),
@@ -250,7 +257,15 @@ export function buildRow(rawRow, resolvedMap, fileId) {
       const excelValue = field.source(rawRow, fields);
       const context = field.context ? field.context(rawRow, fields) : {};
       const key = mappingKey(field.mapType, excelValue, context);
-      const entry = resolvedMap.get(`${field.mapType}::${key}`);
+      let entry = resolvedMap.get(`${field.mapType}::${key}`);
+      // Alternate lookups (budgetSource): if the primary key misses, try the operator's
+      // resolved city (citySearch), so a mapped city variant still finds its config.
+      if (!entry && field.altContexts) {
+        for (const altCtx of field.altContexts(rawRow, fields)) {
+          entry = resolvedMap.get(`${field.mapType}::${mappingKey(field.mapType, '', altCtx)}`);
+          if (entry) break;
+        }
+      }
       if (entry) {
         value = entry.siteValue;
         outputSource = entry;

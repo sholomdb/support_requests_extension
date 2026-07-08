@@ -124,6 +124,32 @@ describe('buildRow', () => {
     assert.equal(row.fields.budgetSourceSearch, undefined);
   });
 
+  test('budgetSource falls back to the resolved city (citySearch) when the raw city differs', () => {
+    const raw = makeRawRow({ city: 'קריה עלומה' });
+    const map = fullyResolvedMap(raw);
+    // No config under the raw city...
+    map.delete(
+      `${MAP_TYPES.budgetSource}::${mappingKey(MAP_TYPES.budgetSource, '', {
+        budgetLabel: 'סיוע חירום למשפחות',
+        city: raw.city,
+      })}`
+    );
+    // ...the city resolves (via the city mapping) to 'בני ברק'...
+    map.set(`${MAP_TYPES.city}::${mappingKey(MAP_TYPES.city, raw.city, { city: raw.city })}`, {
+      siteValue: 'בני ברק',
+    });
+    // ...and the budget source is configured only under 'בני ברק'.
+    map.set(
+      `${MAP_TYPES.budgetSource}::${mappingKey(MAP_TYPES.budgetSource, '', {
+        budgetLabel: 'סיוע חירום למשפחות',
+        city: 'בני ברק',
+      })}`,
+      { siteValue: 'srcA', siteValues: ['srcA'] }
+    );
+    const row = buildRow(raw, map, FILE_ID);
+    assert.deepEqual(row.fields.budgetSourceList, ['srcA']);
+  });
+
   test('non-שלמ budgets get no שלמ program value', () => {
     const raw = makeRawRow();
     const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID); // default budget label index 1
