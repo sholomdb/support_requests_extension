@@ -1711,6 +1711,28 @@ async function handleMessage(message) {
     return { ok: true, confirmed: confirmAgeWarning() };
   }
 
+  // Executes a same-origin fetch to FormTitan on behalf of the popup (direct API calls).
+  // Same-origin here means cookies attach and custom auth headers are allowed, with the
+  // right Origin/Referer - unlike a background-worker fetch. Restricted to the site host.
+  if (message.type === 'API_FETCH') {
+    const req = message.request || {};
+    try {
+      if (new URL(req.url).hostname !== 'ifcjil.formtitan.com') {
+        return { ok: false, error: 'refusing non-FormTitan URL' };
+      }
+      const res = await fetch(req.url, {
+        method: req.method || 'GET',
+        headers: req.headers || {},
+        body: req.body,
+        credentials: 'include',
+      });
+      const text = await res.text();
+      return { ok: true, status: res.status, text };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
   if (message.type === 'GET_PAGE_INFO') {
     const page = getPageType();
     const hasMutav = hasElementById('e199');
