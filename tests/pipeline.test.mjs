@@ -588,6 +588,24 @@ describe('collectMappingQueue', () => {
     assert.ok(q.suggestions.includes('נשוי/אה'));
   });
 
+  test('the family-classification tuple keys on the RESOLVED marital status', async () => {
+    // Two rows, same household size, marital status written two different ways that both
+    // canonicalize to נשוי/אה - they must share ONE familyClassification tuple.
+    const rows = [
+      makeRawRow({ idNumber: '111111118', excelRow: 7, householdSize: '2', maritalStatus: 'נשוי/אה' }),
+      makeRawRow({ idNumber: '222222226', excelRow: 8, householdSize: '2', maritalStatus: 'נשואה' }),
+    ];
+    const { resolved } = await collectMappingQueue(rows, FILE_ID, {});
+    const tupleKey = `${MAP_TYPES.familyClassification}::${mappingKey(
+      MAP_TYPES.familyClassification,
+      '',
+      { householdSize: '2', maritalStatus: 'נשוי/אה' }
+    )}`;
+    // both rows resolve to the same tuple key (keyed on resolved 'נשוי/אה', not raw 'נשואה')
+    assert.ok(resolved.has(tupleKey));
+    assert.equal(resolved.get(tupleKey).siteValue, 'זוג ללא ילדים');
+  });
+
   test('a value already resolvable via a seed does not appear in the queue', async () => {
     const rows = [makeRawRow({ city: 'אלעד' })];
     const { queue, resolved } = await collectMappingQueue(rows, FILE_ID, {});
