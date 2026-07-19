@@ -120,6 +120,17 @@
     <ul id="rowList" class="row-list"></ul>
   </section>
 
+  <section class="card" id="apiRecorderSection">
+    <h2>הקלטת רשת (פיתוח)</h2>
+    <p class="hint">מקליט את קריאות ה-API של האתר (כולל תוכן תגובות) לצורך פיתוח. בצע את התהליך באתר בזמן שההקלטה פעילה, ואז ייצא.</p>
+    <div class="actions">
+      <button class="btn" id="apiRecToggleBtn">⏺ התחל הקלטה</button>
+      <button class="btn" id="apiRecExportBtn">⬇ ייצוא</button>
+      <button class="btn" id="apiRecClearBtn">🗑 נקה</button>
+      <span class="hint" id="apiRecCount"></span>
+    </div>
+  </section>
+
   <script src="../lib/xlsx.full.min.js"></script>
   <script type="module" src="popup.js"></script>
 </body>

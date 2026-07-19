@@ -1,0 +1,3 @@
+# Local API traffic recordings - contain live session tokens, never commit.
+extension/network_requests_recording/
+api-traffic-*.json
