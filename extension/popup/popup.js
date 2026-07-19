@@ -21,6 +21,7 @@ import {
   STEP_STATUS,
 } from '../shared/pipeline.js';
 import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
+import { buildIdLookupRequest, parseMappingResponse } from '../shared/api.js';
 
 let settings = null;
 let session = null;
@@ -152,6 +153,7 @@ async function init() {
   $('apiRecToggleBtn').addEventListener('click', toggleApiRecording);
   $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
   $('apiRecClearBtn').addEventListener('click', clearApiTrafficLog);
+  $('apiTestBtn').addEventListener('click', testApiIdLookup);
   refreshApiRecorderUI();
   $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
@@ -1189,6 +1191,33 @@ async function exportApiTrafficLog() {
 async function clearApiTrafficLog() {
   await chrome.storage.local.remove('apiTrafficLog');
   await refreshApiRecorderUI();
+}
+
+/** Phase 0 spike: prove we can replay the harvested session headers by doing the ID lookup
+ * ourselves (get/sfmapping) and showing what comes back. */
+async function testApiIdLookup() {
+  const { ftAuth } = await chrome.storage.local.get('ftAuth');
+  if (!ftAuth?.headers) {
+    log('אין כותרות אימות שנלכדו – פתח/רענן את אתר FormTitan ובצע פעולה כלשהי, ואז נסה שוב');
+    return;
+  }
+  const suggested = session?.requests?.[session.currentIndex]?.fields?.idNumber || '';
+  const id = prompt('ת.ז. לבדיקת API (ID lookup):', suggested);
+  if (!id) return;
+  try {
+    const req = await buildIdLookupRequest(id.trim());
+    const res = await sendToContent({ type: 'API_FETCH', request: req });
+    if (!res?.ok) {
+      log(`API נכשל: ${res?.error || 'status ' + res?.status}`);
+      return;
+    }
+    const parsed = parseMappingResponse(res.text);
+    log(`API ${res.status}: status=${parsed.status} | ${Object.keys(parsed.fields || {}).length} שדות, ${Object.keys(parsed.params || {}).length} params`);
+    log(JSON.stringify(parsed.fields).slice(0, 600));
+  } catch (e) {
+    log(`שגיאה: ${e.message}`);
+  }
+  await persistLog();
 }
 
 async function startNewRecord() {

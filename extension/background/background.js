@@ -29,5 +29,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     appendApiEntry(message.entry).then(() => sendResponse({ ok: true }));
     return true;
   }
+  if (message.type === 'SAVE_FT_AUTH') {
+    chrome.storage.local.set({ ftAuth: message.auth }).then(() => sendResponse({ ok: true }));
+    return true;
+  }
   return false;
 });
