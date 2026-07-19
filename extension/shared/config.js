@@ -168,9 +168,12 @@ export function findCityLoginId(cities, cityName) {
   if (!cityName) return '';
   const normalized = normalizeCity(cityName);
   if (cities[normalized]?.loginId) return cities[normalized].loginId;
+  // Prefer any entry that actually HAS a login id, so a placeholder/default entry with an
+  // empty id (e.g. the built-in "ביתר עילית") can't shadow the configured one.
   for (const [name, cfg] of Object.entries(cities)) {
-    if (normalizeCity(name) === normalized) return cfg.loginId || '';
-    if (cfg.slug && cfg.slug === cityName.toLowerCase().trim()) return cfg.loginId || '';
+    if (!cfg.loginId) continue;
+    if (normalizeCity(name) === normalized) return cfg.loginId;
+    if (cfg.slug && cfg.slug === cityName.toLowerCase().trim()) return cfg.loginId;
   }
   return '';
 }

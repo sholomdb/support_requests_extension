@@ -1248,9 +1248,12 @@ async function pickLoginCredentials() {
     city = configured[idx] || configured.find((c) => c === (choice || '').trim());
   }
   if (!city) return null;
-  const loginId = findCityLoginId(settings.cities, city);
+  // Reload settings from storage - the side panel keeps its `settings` from when it opened,
+  // so a login id saved afterward wouldn't be visible in the cached copy.
+  settings = await loadSettings();
+  const loginId = findCityLoginId(settings.cities, city) || settings.cities?.[city]?.loginId || '';
   if (!loginId) {
-    alert(`אין ת.ז. התחברות לעיר ${city} – הגדר בהגדרות.`);
+    alert(`אין ת.ז. התחברות לעיר ${city} – הגדר בהגדרות (ולחץ "שמור הגדרות").`);
     return null;
   }
   return { city, loginId, password: creds[city] };
@@ -1285,6 +1288,15 @@ async function loginToSite() {
     }
     await chrome.storage.local.set({ ftAuth: parsed.auth });
     log(`✓ התחברות הצליחה (${cred.city}) – טוקן הסשן נשמר`);
+    // The verify call ran same-origin with credentials, so the session cookie is now set in
+    // the browser. Reload the FormTitan tab so the GUI picks up the logged-in session.
+    const tab = await getFormTitanTab();
+    if (tab?.id) {
+      await chrome.tabs.reload(tab.id);
+      log('רועננתי את דף האתר כדי שיתחבר אוטומטית');
+    } else {
+      log('אין טאב של FormTitan פתוח – פתח את האתר כדי לראות את ההתחברות');
+    }
   } catch (e) {
     log(`שגיאה בהתחברות: ${e.message}`);
   }
