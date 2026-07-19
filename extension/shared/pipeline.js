@@ -12,6 +12,7 @@ import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.
 import {
   inferFamilyClassification,
   inferBirthCountry,
+  inferMaritalStatus,
   routePhone,
   normalizeHolocaust,
 } from './inference.js';
@@ -64,7 +65,17 @@ const FIELD_PIPELINE = [
   { key: 'sector', step: 1, fix: (raw) => normalizeText(raw.sector), validate: required('מגזר חסר') },
   { key: 'ministryFileExists', step: 1, fix: () => 'כן' },
   { key: 'mutavKnowledge', step: 1, fix: () => 'כן' },
-  { key: 'maritalStatus', step: 1, fix: (raw) => normalizeText(raw.maritalStatus), validate: required('מצב משפחתי חסר') },
+  {
+    key: 'maritalStatus',
+    step: 1,
+    // Categorical: Excel carries grammar variants (נשוי, גרושה, אלמן…) that don't match the
+    // site's נשוי/אה-style options. Known roots canonicalize automatically (inferFallback);
+    // anything else prompts the operator once and is saved as a mapping.
+    mapType: MAP_TYPES.maritalStatus,
+    source: (raw) => raw.maritalStatus,
+    inferFallback: (raw) => inferMaritalStatus(raw.maritalStatus),
+    validate: required('מצב משפחתי לא נפתר'),
+  },
   { key: 'householdSize', step: 1, fix: (raw) => String(raw.householdSize || ''), validate: (v) => (Number(v) > 0 ? null : 'מספר נפשות לא תקין') },
   { key: 'holocaustSurvivor', step: 1, fix: (raw) => normalizeHolocaust(raw.holocaustSurvivor) },
   { key: 'birthDate', step: 1, fix: (raw) => normalizeBirthDate(raw.birthDate), validate: (v) => (isValidBirthDate(v) ? null : 'תאריך לידה לא תקין') },

@@ -15,6 +15,29 @@ function normalizeMarital(status) {
   return normalizeText(status);
 }
 
+/** The site's marital-status dropdown options (canonical values). */
+export const MARITAL_OPTIONS = ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמן/ה', 'פרוד/ה', 'ידוע/ה בציבור'];
+
+/**
+ * Canonicalizes an Excel marital status to the site's dropdown value - Excel files carry
+ * grammar variants (נשוי, נשואה, גרושה, אלמן…) that don't text-match the site's נשוי/אה
+ * style options. Root-based, so any gendered/spacing variant of a known status resolves
+ * without an operator prompt. Returns { value } or { needsInput: true }.
+ */
+export function inferMaritalStatus(value) {
+  const m = normalizeMarital(value);
+  if (!m) return { needsInput: true, reason: 'missing marital status' };
+  if (MARITAL_OPTIONS.includes(m)) return { value: m };
+  // "ידוע/ה בציבור" - but NOT "לא ידוע" (unknown), which must go to the operator.
+  if (m.includes('ידוע') && !/לא\s*ידוע/.test(m)) return { value: 'ידוע/ה בציבור' };
+  if (m.includes('נשוי') || m.includes('נשוא')) return { value: 'נשוי/אה' };
+  if (m.includes('רווק')) return { value: 'רווק/ה' };
+  if (m.includes('גרוש')) return { value: 'גרוש/ה' };
+  if (m.includes('אלמ')) return { value: 'אלמן/ה' };
+  if (m.includes('פרוד')) return { value: 'פרוד/ה' };
+  return { needsInput: true, reason: `unrecognized marital status "${m}"` };
+}
+
 function isSingleParent(maritalStatus) {
   const m = normalizeMarital(maritalStatus);
   return m.includes('גרוש') || m.includes('אלמנ') || m.includes('פרוד');

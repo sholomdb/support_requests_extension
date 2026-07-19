@@ -5,6 +5,7 @@ import {
   inferBirthCountry,
   routePhone,
   normalizeHolocaust,
+  inferMaritalStatus,
 } from '../extension/shared/inference.js';
 
 describe('inferFamilyClassification', () => {
@@ -93,6 +94,31 @@ describe('routePhone', () => {
   });
   test('any number longer than 10 digits falls back to the placeholder', () => {
     assert.deepEqual(routePhone('031234567890'), { field: 'homePhone', value: '020000000' });
+  });
+});
+
+describe('inferMaritalStatus', () => {
+  test('grammar variants canonicalize to the site option', () => {
+    assert.equal(inferMaritalStatus('נשוי').value, 'נשוי/אה');
+    assert.equal(inferMaritalStatus('נשואה').value, 'נשוי/אה');
+    assert.equal(inferMaritalStatus('גרושה').value, 'גרוש/ה');
+    assert.equal(inferMaritalStatus('אלמן').value, 'אלמן/ה');
+    assert.equal(inferMaritalStatus('אלמנה').value, 'אלמן/ה');
+    assert.equal(inferMaritalStatus('רווקה').value, 'רווק/ה');
+    assert.equal(inferMaritalStatus('פרודה').value, 'פרוד/ה');
+    assert.equal(inferMaritalStatus('ידועה בציבור').value, 'ידוע/ה בציבור');
+  });
+  test('exact site options pass through', () => {
+    assert.equal(inferMaritalStatus('נשוי/אה').value, 'נשוי/אה');
+    assert.equal(inferMaritalStatus('רווק/ה').value, 'רווק/ה');
+  });
+  test('unknown or missing values need operator input', () => {
+    assert.equal(inferMaritalStatus('מסובך').needsInput, true);
+    assert.equal(inferMaritalStatus('').needsInput, true);
+  });
+  test('"לא ידוע" is NOT treated as ידוע/ה בציבור', () => {
+    assert.equal(inferMaritalStatus('לא ידוע').needsInput, true);
+    assert.equal(inferMaritalStatus('לא ידוע כלל').needsInput, true);
   });
 });
 

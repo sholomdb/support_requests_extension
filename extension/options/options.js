@@ -23,6 +23,7 @@ const TYPE_LABELS = {
   [MAP_TYPES.budgetSource]: 'מקור תקציב',
   [MAP_TYPES.birthCountry]: 'ארץ לידה',
   [MAP_TYPES.familyClassification]: 'סיווג משפחה',
+  [MAP_TYPES.maritalStatus]: 'מצב משפחתי',
 };
 
 /** Escapes text used inside an HTML attribute built via a template literal - values
