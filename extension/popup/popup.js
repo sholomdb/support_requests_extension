@@ -149,6 +149,10 @@ async function init() {
   $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
   $('newRecordBtn').addEventListener('click', startNewRecord);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
+  $('apiRecToggleBtn').addEventListener('click', toggleApiRecording);
+  $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
+  $('apiRecClearBtn').addEventListener('click', clearApiTrafficLog);
+  refreshApiRecorderUI();
   $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
   $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
@@ -1141,6 +1145,50 @@ async function readBudgetSourceBalances() {
     log(`שגיאה בקריאת יתרות: ${err.message}`);
     await persistLog();
   }
+}
+
+/** Dev tool: records the site's own API calls (via recorder-page/bridge content scripts)
+ * so the request/response formats can be reverse-engineered for a request-based flow. */
+async function refreshApiRecorderUI() {
+  const { apiRecording, apiTrafficLog } = await chrome.storage.local.get(['apiRecording', 'apiTrafficLog']);
+  $('apiRecToggleBtn').textContent = apiRecording ? '⏹ עצור הקלטה' : '⏺ התחל הקלטה';
+  $('apiRecToggleBtn').classList.toggle('danger', Boolean(apiRecording));
+  $('apiRecCount').textContent = `${(apiTrafficLog || []).length} קריאות`;
+}
+
+// Live-update the recorded-calls counter while the operator works on the site.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && ('apiTrafficLog' in changes || 'apiRecording' in changes)) {
+    refreshApiRecorderUI().catch(() => {});
+  }
+});
+
+async function toggleApiRecording() {
+  const { apiRecording } = await chrome.storage.local.get('apiRecording');
+  await chrome.storage.local.set({ apiRecording: !apiRecording });
+  if (!apiRecording) log('הקלטת רשת החלה – בצע את התהליך באתר (רענן את הדף אם היה פתוח)');
+  else log('הקלטת רשת נעצרה');
+  await refreshApiRecorderUI();
+}
+
+async function exportApiTrafficLog() {
+  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
+  if (!apiTrafficLog?.length) {
+    alert('אין קריאות מוקלטות');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(apiTrafficLog, null, 1)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `api-traffic-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function clearApiTrafficLog() {
+  await chrome.storage.local.remove('apiTrafficLog');
+  await refreshApiRecorderUI();
 }
 
 async function startNewRecord() {
