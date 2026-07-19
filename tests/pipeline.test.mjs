@@ -60,6 +60,7 @@ function fullyResolvedMap(raw) {
   return new Map([
     resolvedEntry(MAP_TYPES.city, raw.city, { city: raw.city }, { siteValue: raw.city }),
     resolvedEntry(MAP_TYPES.birthCountry, raw.birthCountry, {}, { siteValue: raw.birthCountry }),
+    resolvedEntry(MAP_TYPES.maritalStatus, raw.maritalStatus, {}, { siteValue: raw.maritalStatus }),
     resolvedEntry(
       MAP_TYPES.familyClassification,
       `${raw.householdSize}::${raw.maritalStatus}`,
@@ -567,6 +568,42 @@ describe('collectMappingQueue', () => {
     const itemEntries = queue.filter((q) => q.type === MAP_TYPES.item);
     assert.equal(itemEntries.length, 1);
     assert.equal(itemEntries[0].affectedRowKeys.length, 3);
+  });
+
+  test('a marital-status grammar variant resolves via inference, not a prompt', async () => {
+    const raw = makeRawRow({ maritalStatus: 'נשואה' });
+    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
+    assert.ok(!queue.some((q) => q.type === MAP_TYPES.maritalStatus));
+    const entry = resolved.get(
+      `${MAP_TYPES.maritalStatus}::${mappingKey(MAP_TYPES.maritalStatus, 'נשואה')}`
+    );
+    assert.equal(entry?.siteValue, 'נשוי/אה');
+  });
+
+  test('an unrecognizable marital status queues an operator prompt with the site options', async () => {
+    const raw = makeRawRow({ maritalStatus: 'מסובך' });
+    const { queue } = await collectMappingQueue([raw], FILE_ID, {});
+    const q = queue.find((x) => x.type === MAP_TYPES.maritalStatus);
+    assert.ok(q, 'expected a maritalStatus prompt');
+    assert.ok(q.suggestions.includes('נשוי/אה'));
+  });
+
+  test('the family-classification tuple keys on the RESOLVED marital status', async () => {
+    // Two rows, same household size, marital status written two different ways that both
+    // canonicalize to נשוי/אה - they must share ONE familyClassification tuple.
+    const rows = [
+      makeRawRow({ idNumber: '111111118', excelRow: 7, householdSize: '2', maritalStatus: 'נשוי/אה' }),
+      makeRawRow({ idNumber: '222222226', excelRow: 8, householdSize: '2', maritalStatus: 'נשואה' }),
+    ];
+    const { resolved } = await collectMappingQueue(rows, FILE_ID, {});
+    const tupleKey = `${MAP_TYPES.familyClassification}::${mappingKey(
+      MAP_TYPES.familyClassification,
+      '',
+      { householdSize: '2', maritalStatus: 'נשוי/אה' }
+    )}`;
+    // both rows resolve to the same tuple key (keyed on resolved 'נשוי/אה', not raw 'נשואה')
+    assert.ok(resolved.has(tupleKey));
+    assert.equal(resolved.get(tupleKey).siteValue, 'זוג ללא ילדים');
   });
 
   test('a value already resolvable via a seed does not appear in the queue', async () => {

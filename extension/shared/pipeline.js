@@ -12,6 +12,7 @@ import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.
 import {
   inferFamilyClassification,
   inferBirthCountry,
+  inferMaritalStatus,
   routePhone,
   normalizeHolocaust,
 } from './inference.js';
@@ -64,7 +65,17 @@ const FIELD_PIPELINE = [
   { key: 'sector', step: 1, fix: (raw) => normalizeText(raw.sector), validate: required('מגזר חסר') },
   { key: 'ministryFileExists', step: 1, fix: () => 'כן' },
   { key: 'mutavKnowledge', step: 1, fix: () => 'כן' },
-  { key: 'maritalStatus', step: 1, fix: (raw) => normalizeText(raw.maritalStatus), validate: required('מצב משפחתי חסר') },
+  {
+    key: 'maritalStatus',
+    step: 1,
+    // Categorical: Excel carries grammar variants (נשוי, גרושה, אלמן…) that don't match the
+    // site's נשוי/אה-style options. Known roots canonicalize automatically (inferFallback);
+    // anything else prompts the operator once and is saved as a mapping.
+    mapType: MAP_TYPES.maritalStatus,
+    source: (raw) => raw.maritalStatus,
+    inferFallback: (raw) => inferMaritalStatus(raw.maritalStatus),
+    validate: required('מצב משפחתי לא נפתר'),
+  },
   { key: 'householdSize', step: 1, fix: (raw) => String(raw.householdSize || ''), validate: (v) => (Number(v) > 0 ? null : 'מספר נפשות לא תקין') },
   { key: 'holocaustSurvivor', step: 1, fix: (raw) => normalizeHolocaust(raw.holocaustSurvivor) },
   { key: 'birthDate', step: 1, fix: (raw) => normalizeBirthDate(raw.birthDate), validate: (v) => (isValidBirthDate(v) ? null : 'תאריך לידה לא תקין') },
@@ -98,16 +109,20 @@ const FIELD_PIPELINE = [
     key: 'familyClassification',
     step: 1,
     mapType: MAP_TYPES.familyClassification,
-    source: (raw) => `${raw.householdSize}::${normalizeText(raw.maritalStatus)}`,
-    context: (raw) => ({ householdSize: raw.householdSize, maritalStatus: raw.maritalStatus }),
-    inferFallback: (raw) => inferFamilyClassification(raw.householdSize, raw.maritalStatus),
+    // Tuple mapping: keyed on householdSize + the RESOLVED marital status, so it's computed
+    // after maritalStatus is canonicalized (dependsOn defers it until then). Keying on the
+    // resolved value means "נשואה" and "נשוי/אה" share one tuple, not two.
+    dependsOn: ['maritalStatus'],
+    source: (raw, fields) => `${raw.householdSize}::${normalizeText(fields?.maritalStatus)}`,
+    context: (raw, fields) => ({ householdSize: raw.householdSize, maritalStatus: fields?.maritalStatus }),
+    inferFallback: (raw, fields) => inferFamilyClassification(raw.householdSize, fields?.maritalStatus),
     // "זוג ללא ילדים" is only valid for a married couple of exactly 2 - flag any row
     // that resolved to it otherwise (a wrong mapping or bad source data).
-    validate: (value, raw) => {
+    validate: (value, raw, fields) => {
       if (!value) return 'סיווג משפחה לא נפתר';
       if (value.includes('זוג ללא ילדים')) {
         const size = Number(raw.householdSize) || 0;
-        const married = /נשוי|ידוע/.test(normalizeText(raw.maritalStatus));
+        const married = /נשוי|ידוע/.test(normalizeText(fields?.maritalStatus));
         if (size !== 2 || !married) {
           return 'סיווג "זוג ללא ילדים" מחייב מצב משפחתי נשוי/אה וגודל משפחה 2';
         }
@@ -184,16 +199,27 @@ export async function collectMappingQueue(rawRows, fileId, settings) {
 
   for (const raw of rawRows) {
     const rowKey = rowKeyOf(fileId, raw);
+    // Resolved site values for THIS row, keyed by field.key - lets a tuple field key on the
+    // resolved value of a field it depends on. mapFields() preserves FIELD_PIPELINE order, so
+    // a dependency is always processed before the field that dependsOn it.
+    const rowFields = {};
     for (const field of mapFields()) {
-      const excelValue = field.source(raw);
-      const context = field.context ? field.context(raw) : {};
+      // Defer a dependent field until every field it relies on is resolved for this row; if a
+      // dependency is still queued for the operator, we'll compute this one on the next pass.
+      if (field.dependsOn && field.dependsOn.some((dep) => rowFields[dep] === undefined)) continue;
+
+      const excelValue = field.source(raw, rowFields);
+      const context = field.context ? field.context(raw, rowFields) : {};
       const key = mappingKey(field.mapType, excelValue, context);
       const cacheKey = `${field.mapType}::${key}`;
 
-      if (resolved.has(cacheKey)) continue;
+      if (resolved.has(cacheKey)) {
+        rowFields[field.key] = resolved.get(cacheKey).siteValue;
+        continue;
+      }
       if (queueMap.has(cacheKey)) {
         queueMap.get(cacheKey).affectedRowKeys.push(rowKey);
-        continue;
+        continue; // unresolved -> rowFields[field.key] stays undefined -> dependents defer
       }
 
       const result = await resolveMapping(field.mapType, excelValue, context);
@@ -202,13 +228,15 @@ export async function collectMappingQueue(rawRows, fileId, settings) {
         if (field.fallback && !siteValue) siteValue = field.fallback(raw, settings);
         const maxPrice = field.mapType === MAP_TYPES.item ? await getItemMaxPrice(siteValue) : undefined;
         resolved.set(cacheKey, { siteValue, siteValues: result.siteValues, labelIndex: result.labelIndex, selector: result.selector, maxPrice });
+        rowFields[field.key] = siteValue;
         continue;
       }
 
       if (field.inferFallback) {
-        const inferred = field.inferFallback(raw);
+        const inferred = field.inferFallback(raw, rowFields);
         if (!inferred.needsInput) {
           resolved.set(cacheKey, { siteValue: inferred.value });
+          rowFields[field.key] = inferred.value;
           continue;
         }
       }
