@@ -1248,9 +1248,12 @@ async function pickLoginCredentials() {
     city = configured[idx] || configured.find((c) => c === (choice || '').trim());
   }
   if (!city) return null;
-  const loginId = findCityLoginId(settings.cities, city);
+  // Reload settings from storage - the side panel keeps its `settings` from when it opened,
+  // so a login id saved afterward wouldn't be visible in the cached copy.
+  settings = await loadSettings();
+  const loginId = findCityLoginId(settings.cities, city) || settings.cities?.[city]?.loginId || '';
   if (!loginId) {
-    alert(`אין ת.ז. התחברות לעיר ${city} – הגדר בהגדרות.`);
+    alert(`אין ת.ז. התחברות לעיר ${city} – הגדר בהגדרות (ולחץ "שמור הגדרות").`);
     return null;
   }
   return { city, loginId, password: creds[city] };
