@@ -45,6 +45,29 @@ refresh the site (re-harvests fresh headers). Requests run from the extension ag
    `push e361` with the combined `state`.
 Carry the SF ids between steps in memory (never hardcoded).
 
+## Status (2026-07-20)
+- **Phase 0 (auth spike): done** — `buildIdLookupRequest` + content-script `API_FETCH` proxy prove header replay.
+- **Phase 1 (discovery + read chain): built, dry-run** —
+  - `shared/form-schema.js`: `GET preview-page` → `label→uid` map + `findPushRule` (picks the
+    sfAction rule whose redirect targets the next page; reproduces the recorded MUTAV `4316add2/
+    fd5ea8e4` and WhoHowM `a55b6b5e/610bb09d` ids).
+  - `shared/api.js`: `buildItemSearchRequest` (e421), `buildBudgetSourceRequest` (e424),
+    `buildPushRequest` (multipart), structural parsers `parseIdLookup/parseItemSearch/
+    parseBudgetSource` (SF ids matched by prefix 001/a10/a3V/a0R, no response GUIDs hardcoded).
+  - `shared/state-assembler.js`: `assembleMutavState` (validated: reproduces every non-empty key
+    of the recorded e238 push).
+  - `shared/ft-flow.js`: `runRequest` orchestrates discover → id-lookup → item-search →
+    budget-source, builds the MUTAV push. `opts.pushMutav` gates the first-stage write; the
+    **final submit (e361) is intentionally not assembled/sent** (operator's request).
+  - Popup: “🧪 הרצת API יבשה” runs the chain for the current request, logs resolved ids + the
+    would-push state. `content.js` `API_FETCH` now rebuilds real `FormData` from `req.form`.
+- **Known live unknowns to confirm on the site:** the page-instance `guid` on e421/e424 reads
+  (harvested via `ctx.pageGuid`), and the account id (`ec14481b`=a123…, a session/city constant
+  scraped from recorded traffic via `harvestAccountId`).
+- **Next:** confirm the reads succeed live → trim the 3 extra pass-through params from the MUTAV
+  state and enable `pushMutav` → build the e361 final-state assembler (supplier + home-init
+  pageParams) behind the `submitFinal` toggle.
+
 ## Rollout (de-risk before the big rewrite)
 - **Phase 0 - auth spike (tiny):** `api.js` performs ONE call - the ID lookup - with harvested
   headers. Popup dev button shows the response. Proves header replay works end to end. If it

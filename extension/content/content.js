@@ -1720,10 +1720,23 @@ async function handleMessage(message) {
       if (new URL(req.url).hostname !== 'ifcjil.formtitan.com') {
         return { ok: false, error: 'refusing non-FormTitan URL' };
       }
+      // Requests can't carry a live FormData across the extension message boundary (it
+      // serializes to JSON), so a multipart request is described by `req.form` (a flat
+      // {field: value} object) and the real FormData is rebuilt here. The browser then sets
+      // the multipart Content-Type + boundary itself, so we must NOT pass one in headers.
+      let body = req.body;
+      const headers = { ...(req.headers || {}) };
+      if (req.form && typeof req.form === 'object') {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(req.form)) fd.append(k, v == null ? '' : String(v));
+        body = fd;
+        delete headers['Content-Type'];
+        delete headers['content-type'];
+      }
       const res = await fetch(req.url, {
         method: req.method || 'GET',
-        headers: req.headers || {},
-        body: req.body,
+        headers,
+        body,
         credentials: 'include',
       });
       const text = await res.text();
