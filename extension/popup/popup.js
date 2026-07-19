@@ -1288,6 +1288,15 @@ async function loginToSite() {
     }
     await chrome.storage.local.set({ ftAuth: parsed.auth });
     log(`✓ התחברות הצליחה (${cred.city}) – טוקן הסשן נשמר`);
+    // The verify call ran same-origin with credentials, so the session cookie is now set in
+    // the browser. Reload the FormTitan tab so the GUI picks up the logged-in session.
+    const tab = await getFormTitanTab();
+    if (tab?.id) {
+      await chrome.tabs.reload(tab.id);
+      log('רועננתי את דף האתר כדי שיתחבר אוטומטית');
+    } else {
+      log('אין טאב של FormTitan פתוח – פתח את האתר כדי לראות את ההתחברות');
+    }
   } catch (e) {
     log(`שגיאה בהתחברות: ${e.message}`);
   }
