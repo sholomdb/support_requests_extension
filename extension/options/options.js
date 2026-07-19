@@ -14,7 +14,12 @@ import {
   getBudgetSourceList,
   migrateBudgetSourceToLabelKeys,
 } from '../shared/mappings.js';
-import { getBudgetSourceRemaining, saveBudgetSourceRemaining } from '../shared/storage.js';
+import {
+  getBudgetSourceRemaining,
+  saveBudgetSourceRemaining,
+  getCityCredentials,
+  saveCityCredentials,
+} from '../shared/storage.js';
 
 const TYPE_LABELS = {
   [MAP_TYPES.city]: 'עיר',
@@ -41,6 +46,7 @@ let settings = null;
 
 async function init() {
   settings = await loadSettings();
+  cityCredentials = await getCityCredentials();
   await migrateBudgetSourceToLabelKeys();
   renderCities();
   await renderCategories();
@@ -235,20 +241,23 @@ async function renderBudgetBalances() {
   }
 }
 
+let cityCredentials = {};
+
 function renderCities() {
   const container = document.getElementById('citiesContainer');
   container.innerHTML = '';
   for (const [name, cfg] of Object.entries(settings.cities)) {
-    container.appendChild(createCityRow(name, cfg.loginId || ''));
+    container.appendChild(createCityRow(name, cfg.loginId || '', cityCredentials[name] || ''));
   }
 }
 
-function createCityRow(name, loginId) {
+function createCityRow(name, loginId, password) {
   const row = document.createElement('div');
   row.className = 'city-row';
   row.innerHTML = `
     <label>שם עיר<input type="text" class="city-name" value="${escapeHtml(name)}" /></label>
     <label>ת.ז. התחברות<input type="text" class="city-login" value="${escapeHtml(loginId)}" /></label>
+    <label>סיסמה<input type="password" class="city-password" value="${escapeHtml(password)}" autocomplete="off" /></label>
     <button class="btn remove-city">✕</button>
   `;
   row.querySelector('.remove-city').addEventListener('click', () => row.remove());
@@ -256,7 +265,7 @@ function createCityRow(name, loginId) {
 }
 
 function addCity() {
-  document.getElementById('citiesContainer').appendChild(createCityRow('', ''));
+  document.getElementById('citiesContainer').appendChild(createCityRow('', '', ''));
 }
 
 async function renderCategories() {
@@ -381,16 +390,24 @@ async function captureItemSelector(row) {
 
 function collectCities() {
   const cities = {};
+  const creds = {};
   document.querySelectorAll('.city-row').forEach((row) => {
     const name = row.querySelector('.city-name').value.trim();
     const loginId = row.querySelector('.city-login').value.trim();
-    if (name) cities[name] = { loginId, notes: '' };
+    const password = row.querySelector('.city-password')?.value || '';
+    if (name) {
+      cities[name] = { loginId, notes: '' };
+      if (password) creds[name] = password; // passwords kept out of synced settings
+    }
   });
-  return cities;
+  return { cities, creds };
 }
 
 async function saveAll() {
-  settings.cities = collectCities();
+  const collected = collectCities();
+  settings.cities = collected.cities;
+  cityCredentials = collected.creds;
+  await saveCityCredentials(cityCredentials);
   settings.siteUrl = document.getElementById('siteUrl').value.trim();
   settings.fillDelayMs = Number(document.getElementById('fillDelayMs').value) || 400;
   settings.idLookupWaitMs = Number(document.getElementById('idLookupWaitMs').value) || 2000;

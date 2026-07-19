@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { buildIdLookupRequest, parseMappingResponse, API_BASE } = await import('../extension/shared/api.js');
+const { buildIdLookupRequest, parseMappingResponse, isAuthFailure, API_BASE } = await import('../extension/shared/api.js');
 
 const AUTH = { headers: { fturl: 'https://ifcjil.formtitan.com/x', kbgr8jmwl3r1ffbw3nilg: 'a'.repeat(60) } };
 
@@ -48,5 +48,17 @@ describe('parseMappingResponse', () => {
     const r = parseMappingResponse('<html>error</html>');
     assert.equal(r.ok, false);
     assert.ok(r.raw.includes('error'));
+  });
+});
+
+describe('isAuthFailure', () => {
+  test('non-2xx and login pages are auth failures', () => {
+    assert.equal(isAuthFailure(401, '{}'), true);
+    assert.equal(isAuthFailure(302, ''), true);
+    assert.equal(isAuthFailure(200, '<html>please login</html>'), true);
+    assert.equal(isAuthFailure(200, '{"type":"sfsmartv"}'), true);
+  });
+  test('a normal 200 sfmapping response is not an auth failure', () => {
+    assert.equal(isAuthFailure(200, '{"status":"success","data":{}}'), false);
   });
 });

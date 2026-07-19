@@ -8,7 +8,7 @@ import {
   getBudgetSourceRemaining,
   saveBudgetSourceRemaining,
 } from '../shared/storage.js';
-import { formatCurrency, normalizeText } from '../shared/utils.js';
+import { formatCurrency, normalizeText, normalizeCity } from '../shared/utils.js';
 import {
   collectMappingQueue,
   buildRow,
@@ -21,7 +21,9 @@ import {
   STEP_STATUS,
 } from '../shared/pipeline.js';
 import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
-import { buildIdLookupRequest, parseMappingResponse } from '../shared/api.js';
+import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
+import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
+import { getCityCredentials } from '../shared/storage.js';
 
 let settings = null;
 let session = null;
@@ -149,6 +151,7 @@ async function init() {
   $('fileInput').addEventListener('change', handleFileUpload);
   $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
   $('newRecordBtn').addEventListener('click', startNewRecord);
+  $('loginBtn').addEventListener('click', loginToSite);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
   $('apiRecToggleBtn').addEventListener('click', toggleApiRecording);
   $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
@@ -1211,11 +1214,79 @@ async function testApiIdLookup() {
       log(`API נכשל: ${res?.error || 'status ' + res?.status}`);
       return;
     }
+    if (isAuthFailure(res.status, res.text)) {
+      log('נראה שהסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
+      return;
+    }
     const parsed = parseMappingResponse(res.text);
     log(`API ${res.status}: status=${parsed.status} | ${Object.keys(parsed.fields || {}).length} שדות, ${Object.keys(parsed.params || {}).length} params`);
     log(JSON.stringify(parsed.fields).slice(0, 600));
   } catch (e) {
     log(`שגיאה: ${e.message}`);
+  }
+  await persistLog();
+}
+
+/** Picks which city's credentials to log in with: the current file's city, else the only
+ * configured one, else asks the operator to choose. Returns { city, loginId, password } or null. */
+async function pickLoginCredentials() {
+  const creds = await getCityCredentials();
+  const configured = Object.keys(creds).filter((c) => creds[c]);
+  if (!configured.length) {
+    alert('לא הוגדרו סיסמאות. הזן ת.ז. וסיסמה לכל עיר בהגדרות.');
+    return null;
+  }
+  let city = null;
+  const fileCity = session?.parsedFile?.city;
+  if (fileCity) {
+    city = configured.find((c) => normalizeCity(c) === normalizeCity(fileCity)) || null;
+  }
+  if (!city) city = configured.length === 1 ? configured[0] : null;
+  if (!city) {
+    const choice = prompt(`עבור איזו עיר להתחבר?\n${configured.map((c, i) => `${i + 1}. ${c}`).join('\n')}`);
+    const idx = Number(choice) - 1;
+    city = configured[idx] || configured.find((c) => c === (choice || '').trim());
+  }
+  if (!city) return null;
+  const loginId = findCityLoginId(settings.cities, city);
+  if (!loginId) {
+    alert(`אין ת.ז. התחברות לעיר ${city} – הגדר בהגדרות.`);
+    return null;
+  }
+  return { city, loginId, password: creds[city] };
+}
+
+/** Logs in to FormTitan via the 2-step SMS flow using stored credentials, and stores the
+ * resulting session tokens (ftAuth) for direct API calls. */
+async function loginToSite() {
+  const cred = await pickLoginCredentials();
+  if (!cred) return;
+  try {
+    log(`מבקש קוד SMS עבור ${cred.city}…`);
+    const r1 = await sendToContent({ type: 'API_FETCH', request: buildSmsRequest(cred.loginId, cred.password) });
+    if (!r1?.ok) {
+      log(`בקשת SMS נכשלה: ${r1?.error || 'status ' + r1?.status}`);
+      await persistLog();
+      return;
+    }
+    const code = prompt('הזן את קוד ה-SMS שקיבלת:');
+    if (!code) return;
+    const r2 = await sendToContent({ type: 'API_FETCH', request: buildVerifyRequest(cred.loginId, cred.password, code.trim()) });
+    if (!r2?.ok) {
+      log(`אימות נכשל: ${r2?.error || 'status ' + r2?.status}`);
+      await persistLog();
+      return;
+    }
+    const parsed = parseVerifyResponse(r2.text);
+    if (!parsed.ok) {
+      log(`התחברות נכשלה: ${parsed.error}`);
+      await persistLog();
+      return;
+    }
+    await chrome.storage.local.set({ ftAuth: parsed.auth });
+    log(`✓ התחברות הצליחה (${cred.city}) – טוקן הסשן נשמר`);
+  } catch (e) {
+    log(`שגיאה בהתחברות: ${e.message}`);
   }
   await persistLog();
 }

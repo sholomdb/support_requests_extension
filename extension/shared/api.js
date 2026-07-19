@@ -51,6 +51,16 @@ export async function buildIdLookupRequest(idNumber, auth) {
   };
 }
 
+/** Heuristic: does a FormTitan API result indicate the session is unauthenticated/expired?
+ * (No captured 401 sample yet, so we treat a non-2xx status, or a login/smart-v page in the
+ * body, as an auth failure - so the UI can prompt a re-login instead of failing silently.) */
+export function isAuthFailure(status, text) {
+  if (status === 401 || status === 403) return true;
+  if (status && (status < 200 || status >= 300)) return true;
+  const t = String(text || '').slice(0, 500).toLowerCase();
+  return t.includes('sfsmartv') || t.includes('/smart-v') || (t.includes('<html') && t.includes('login'));
+}
+
 /** Extracts eNNN -> value pairs and status from a get/sfmapping response text, for readable
  * display and for later mapping back to our fields. Field keys look like
  * "view:p43#-#p43:e229:ft_text" or "param#-#<guid>". */

@@ -58,6 +58,22 @@ export async function saveBudgetSourceRemaining(map = {}) {
   return map;
 }
 
+/**
+ * Per-city login passwords, keyed by city name: { [city]: password }. Kept in
+ * chrome.storage.local (on this device only, NOT synced to the Google account) since they are
+ * credentials. The login id per city already lives in settings.cities[city].loginId; this only
+ * holds the Personal_password__c the operator types in Settings, used by the 2FA login flow.
+ */
+export async function getCityCredentials() {
+  const { cityCredentials } = await chrome.storage.local.get('cityCredentials');
+  return cityCredentials || {};
+}
+
+export async function saveCityCredentials(map = {}) {
+  await chrome.storage.local.set({ cityCredentials: map });
+  return map;
+}
+
 export async function getSession() {
   const { session } = await chrome.storage.local.get('session');
   return session || null;
