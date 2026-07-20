@@ -1,7 +1,19 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { buildIdLookupRequest, parseMappingResponse, isAuthFailure, API_BASE } = await import('../extension/shared/api.js');
+const {
+  buildIdLookupRequest,
+  parseMappingResponse,
+  isAuthFailure,
+  API_BASE,
+  buildItemSearchRequest,
+  buildBudgetSourceRequest,
+  buildPushRequest,
+  parseIdLookup,
+  parseItemSearch,
+  parseBudgetSource,
+  BIND,
+} = await import('../extension/shared/api.js');
 
 const AUTH = { headers: { fturl: 'https://ifcjil.formtitan.com/x', kbgr8jmwl3r1ffbw3nilg: 'a'.repeat(60) } };
 
@@ -48,6 +60,89 @@ describe('parseMappingResponse', () => {
     const r = parseMappingResponse('<html>error</html>');
     assert.equal(r.ok, false);
     assert.ok(r.raw.includes('error'));
+  });
+});
+
+describe('buildItemSearchRequest', () => {
+  test('sends item text + budget label + the allow child params', async () => {
+    const req = await buildItemSearchRequest('מזון', 'סיוע חירום למשפחות', { auth: AUTH });
+    const b = JSON.parse(req.body);
+    assert.equal(b.data.elemUID, 'e421');
+    assert.equal(b.data.ruleUID, BIND.itemSearchRule);
+    const item = Object.values(b.data.list)[0];
+    assert.equal(item['view:p239#-#p239:e421'], 'מזון');
+    assert.equal(item['view:p239#-#p239:e687:ftListValue'], 'סיוע חירום למשפחות');
+    const child = Object.values(item.childrens.list)[0];
+    assert.equal(child[`param#-#${BIND.paramBudgetLabel}`], 'סיוע חירום למשפחות');
+    assert.equal(child[`param#-#${BIND.paramItemAllow}`], 'true');
+  });
+});
+
+describe('buildBudgetSourceRequest', () => {
+  test('sends account id, date and budget label with ruleUID action', async () => {
+    const req = await buildBudgetSourceRequest(
+      { accountId: 'a123z0', dateISO: '2026-07-19', budgetLabel: 'סיוע חירום למשפחות' },
+      { auth: AUTH },
+    );
+    const b = JSON.parse(req.body);
+    assert.equal(b.data.elemUID, 'e424');
+    assert.equal(b.data.ruleUID, 'action');
+    const row = Object.values(b.data.list)[0];
+    assert.equal(row[`param#-#${BIND.paramAccountId}`], 'a123z0');
+    assert.equal(row[`param#-#${BIND.paramDate}`], '2026-07-19');
+    assert.equal(row[`param#-#${BIND.paramBudgetLabel}`], 'סיוע חירום למשפחות');
+  });
+});
+
+describe('buildPushRequest', () => {
+  test('produces a multipart form (no Content-Type) with state serialized', () => {
+    const req = buildPushRequest({ elemUID: 'e238', actionRuleId: 'A', nodeId: 'N', state: { k: 1 } }, AUTH);
+    assert.ok(req.url.endsWith('/push/sfmapping'));
+    assert.equal(req.form.elemUID, 'e238');
+    assert.equal(req.form.actionRuleId, 'A');
+    assert.equal(req.form.nodeId, 'N');
+    assert.deepEqual(JSON.parse(req.form.state), { k: 1 });
+    assert.ok(!('Content-Type' in req.headers));
+    assert.ok('body' in req === false);
+  });
+});
+
+describe('structural id parsers', () => {
+  test('parseIdLookup pulls the contact id (001…) from params', () => {
+    const text = JSON.stringify({
+      status: 'success',
+      data: { 'param#-#ce55f641-1565-448e-9272-5fb51968a0fc': '001N2000011m4eoIAA', 'view:p43#-#p43:e200': 'כהן' },
+    });
+    assert.equal(parseIdLookup(text).contactId, '001N2000011m4eoIAA');
+  });
+
+  test('parseItemSearch pulls the item id (a10…) and price cap', () => {
+    const text = JSON.stringify({
+      status: 'success',
+      data: {
+        'view:p239#-#p239:s287:a10e5c5c-cb76-4d2f-923f-b7e6dc3c35a5': 'a103z00000FcPbKAAV',
+        'view:p239#-#p239:s287:e296:TYPO_TEXT': 5000,
+        'view:p239#-#p239:s287:c87a2da3': 'a3k3z000002hmkTAAQ',
+      },
+    });
+    const r = parseItemSearch(text);
+    assert.equal(r.itemId, 'a103z00000FcPbKAAV');
+    assert.equal(r.priceCap, 5000);
+  });
+
+  test('parseBudgetSource pulls source id (a3V…), remaining and record id (a0R…)', () => {
+    const text = JSON.stringify({
+      status: 'success',
+      data: {
+        'view:e424#-#p298:e424:value': 'a3VN2000002ZxAaMAK',
+        'view:e424#-#p298:e424:g1': 216747,
+        'view:e424#-#p298:e424:g2': 'a0RN200000HJTSj',
+      },
+    });
+    const r = parseBudgetSource(text);
+    assert.equal(r.sourceId, 'a3VN2000002ZxAaMAK');
+    assert.equal(r.remaining, 216747);
+    assert.equal(r.recordId, 'a0RN200000HJTSj');
   });
 });
 

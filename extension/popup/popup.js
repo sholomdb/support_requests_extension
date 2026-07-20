@@ -24,6 +24,7 @@ import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../share
 import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
+import { runRequest, AUTH_ERROR } from '../shared/ft-flow.js';
 
 let settings = null;
 let session = null;
@@ -157,6 +158,7 @@ async function init() {
   $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
   $('apiRecClearBtn').addEventListener('click', clearApiTrafficLog);
   $('apiTestBtn').addEventListener('click', testApiIdLookup);
+  $('apiDryRunBtn').addEventListener('click', apiDryRun);
   refreshApiRecorderUI();
   $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
@@ -1223,6 +1225,52 @@ async function testApiIdLookup() {
     log(JSON.stringify(parsed.fields).slice(0, 600));
   } catch (e) {
     log(`שגיאה: ${e.message}`);
+  }
+  await persistLog();
+}
+
+/** Best-effort: pulls the logged-in account id (a123…, bound to guid ec14481b) out of any
+ * recorded API traffic, so the dry run can resolve the budget-source/request-record too. It is
+ * a session/city constant that never appears in a response, only in requests. */
+async function harvestAccountId() {
+  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
+  const guid = 'ec14481b-095b-44b8-875c-69e87aa34b2f';
+  for (const entry of apiTrafficLog || []) {
+    const body = typeof entry.requestBody === 'string' ? entry.requestBody : JSON.stringify(entry.requestBody || '');
+    const m = body.match(new RegExp(guid + '"\\s*:\\s*"(a[0-9A-Za-z]{5,})'));
+    if (m) return m[1];
+  }
+  return '';
+}
+
+/** Runs the headless GET/POST chain for the current request as a DRY RUN: discovers the field
+ * ids from preview-page, resolves the SF ids via the read chain, and builds (without sending)
+ * the pushes. The final submit (e361) is never fired. Proves the request-based flow end to end
+ * on the live site and surfaces what's still missing (account id, page guid). */
+async function apiDryRun() {
+  const { ftAuth } = await chrome.storage.local.get('ftAuth');
+  if (!ftAuth?.headers) {
+    log('אין כותרות אימות שנלכדו – התחבר (🔑) או פתח/רענן את האתר, ואז נסה שוב');
+    return;
+  }
+  const request = session?.requests?.[session.currentIndex];
+  if (!request?.fields?.idNumber) {
+    log('אין בקשה נוכחית עם ת.ז. – טען קובץ ובחר בקשה');
+    return;
+  }
+  const fetchApi = (req) => sendToContent({ type: 'API_FETCH', request: req });
+  const accountId = await harvestAccountId();
+  const ctx = { accountId, dateISO: new Date().toISOString().slice(0, 10) };
+  log(`🧪 הרצת API יבשה לבקשה ${request.fields.idNumber}${accountId ? '' : ' (ללא accountId – מקור התקציב לא ייפתר)'}…`);
+  try {
+    const trace = await runRequest(request, { fetchApi, auth: ftAuth, ctx });
+    for (const line of trace.log) log(`   ${line}`);
+    const ids = trace.ids;
+    log(`מזהים: contact=${ids.contactId || '-'} | פריט=${ids.itemId || '-'} | מקור=${ids.sourceId || '-'} | יתרה=${ids.remaining ?? '-'} | רשומה=${ids.recordId || '-'}`);
+    log(`state של MUTAV (e238) נבנה עם ${Object.keys(JSON.parse(trace.requests.mutavPush.form.state)).length} שדות (לא נשלח)`);
+  } catch (e) {
+    if (e.code === AUTH_ERROR) log('הסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
+    else log(`הרצה יבשה נכשלה: ${e.message}`);
   }
   await persistLog();
 }
