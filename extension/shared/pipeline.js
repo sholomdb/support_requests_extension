@@ -13,6 +13,7 @@ import {
   inferFamilyClassification,
   inferBirthCountry,
   inferMaritalStatus,
+  inferSector,
   routePhone,
   normalizeHolocaust,
 } from './inference.js';
@@ -62,7 +63,18 @@ const FIELD_PIPELINE = [
   { key: 'lastName', step: 1, fix: (raw) => normalizeText(raw.lastName), validate: required('שם משפחה חסר') },
   { key: 'firstName', step: 1, fix: (raw) => normalizeText(raw.firstName), validate: required('שם פרטי חסר') },
   { key: 'gender', step: 1, fix: (raw) => normalizeText(raw.gender), validate: required('מגדר חסר') },
-  { key: 'sector', step: 1, fix: (raw) => normalizeText(raw.sector), validate: required('מגזר חסר') },
+  {
+    key: 'sector',
+    step: 1,
+    // Categorical: Excel carries gender/spelling variants (יהודיה, מוסלמית, בדווי…) that
+    // don't match the site's דרוזי/יהודי/מוסלמי/נוצרי/בדואי options. Known roots
+    // canonicalize automatically (inferFallback); anything else (e.g. "ערבי") prompts the
+    // operator once and is saved as a mapping.
+    mapType: MAP_TYPES.sector,
+    source: (raw) => raw.sector,
+    inferFallback: (raw) => inferSector(raw.sector),
+    validate: required('מגזר לא נפתר'),
+  },
   { key: 'ministryFileExists', step: 1, fix: () => 'כן' },
   { key: 'mutavKnowledge', step: 1, fix: () => 'כן' },
   {

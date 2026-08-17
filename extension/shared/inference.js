@@ -38,6 +38,28 @@ export function inferMaritalStatus(value) {
   return { needsInput: true, reason: `unrecognized marital status "${m}"` };
 }
 
+/** The site's sector dropdown options (#e210, canonical values). */
+export const SECTOR_OPTIONS = ['יהודי', 'מוסלמי', 'נוצרי', 'דרוזי', 'בדואי'];
+
+/**
+ * Canonicalizes an Excel sector to the site's dropdown value - Excel files carry gender and
+ * spelling variants (יהודיה, מוסלמית, בדווי…) that don't text-match the site's options.
+ * Root-based, like inferMaritalStatus. "ערבי" is deliberately NOT inferred: it could be
+ * מוסלמי, נוצרי or בדואי, so it goes to the operator once and is saved as a mapping.
+ * Returns { value } or { needsInput: true }.
+ */
+export function inferSector(value) {
+  const s = normalizeText(value);
+  if (!s) return { needsInput: true, reason: 'missing sector' };
+  if (SECTOR_OPTIONS.includes(s)) return { value: s };
+  if (s.includes('יהוד')) return { value: 'יהודי' };
+  if (s.includes('מוסלמ') || s.includes('מסלמ')) return { value: 'מוסלמי' };
+  if (s.includes('נוצר')) return { value: 'נוצרי' };
+  if (s.includes('דרוז')) return { value: 'דרוזי' };
+  if (s.includes('בדוא') || s.includes('בדוו')) return { value: 'בדואי' };
+  return { needsInput: true, reason: `unrecognized sector "${s}"` };
+}
+
 function isSingleParent(maritalStatus) {
   const m = normalizeMarital(maritalStatus);
   return m.includes('גרוש') || m.includes('אלמנ') || m.includes('פרוד');

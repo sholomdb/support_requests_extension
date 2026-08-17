@@ -1,6 +1,7 @@
 import { normalizeText, normalizeCity } from './utils.js';
 import { BUDGET_LABELS } from './config.js';
 import { catalogItemNames } from './catalog-data.js';
+import { SECTOR_OPTIONS } from './inference.js';
 
 export const MAP_TYPES = {
   budgetType: 'budgetType',
@@ -10,6 +11,7 @@ export const MAP_TYPES = {
   item: 'item',
   familyClassification: 'familyClassification',
   maritalStatus: 'maritalStatus',
+  sector: 'sector',
 };
 
 /** Default Excel → site mappings (operator can override) */
@@ -43,6 +45,10 @@ export const DEFAULT_SEEDS = {
   // prompt. A saved operator mapping still overrides this if the Excel wording differs.
   item: Object.fromEntries(catalogItemNames().map((name) => [name, { siteValue: name }])),
   familyClassification: {},
+  // Starts empty like maritalStatus: Excel gender/spelling variants (יהודיה, מוסלמית,
+  // בדווי…) canonicalize via inferSector, and anything else is an operator decision
+  // (e.g. "ערבי", which could be מוסלמי or נוצרי) saved as a mapping on first prompt.
+  sector: {},
 };
 
 export function mappingKey(type, excelValue, context = {}) {
@@ -157,6 +163,7 @@ export const HARDCODED_SUGGESTIONS = {
   [MAP_TYPES.city]: ['אלעד', 'ביתר עילית', 'בני ברק', 'ועד יהודי חברון', 'בית אל', 'מודיעין עילית', 'מטה בנימין'],
   [MAP_TYPES.familyClassification]: ['משפחה עם זוג הורים', 'משפחה עם הורה עצמאי  (חד הוריות)', 'זוג ללא ילדים', 'בודד'],
   [MAP_TYPES.maritalStatus]: ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמן/ה', 'פרוד/ה', 'ידוע/ה בציבור'],
+  [MAP_TYPES.sector]: SECTOR_OPTIONS,
   [MAP_TYPES.item]: catalogItemNames(),
   [MAP_TYPES.budgetSource]: [],
 };

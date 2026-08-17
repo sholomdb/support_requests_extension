@@ -61,6 +61,7 @@ function fullyResolvedMap(raw) {
     resolvedEntry(MAP_TYPES.city, raw.city, { city: raw.city }, { siteValue: raw.city }),
     resolvedEntry(MAP_TYPES.birthCountry, raw.birthCountry, {}, { siteValue: raw.birthCountry }),
     resolvedEntry(MAP_TYPES.maritalStatus, raw.maritalStatus, {}, { siteValue: raw.maritalStatus }),
+    resolvedEntry(MAP_TYPES.sector, raw.sector, {}, { siteValue: raw.sector }),
     resolvedEntry(
       MAP_TYPES.familyClassification,
       `${raw.householdSize}::${raw.maritalStatus}`,
@@ -586,6 +587,22 @@ describe('collectMappingQueue', () => {
     const q = queue.find((x) => x.type === MAP_TYPES.maritalStatus);
     assert.ok(q, 'expected a maritalStatus prompt');
     assert.ok(q.suggestions.includes('נשוי/אה'));
+  });
+
+  test('a sector spelling variant resolves via inference, not a prompt', async () => {
+    const raw = makeRawRow({ sector: 'יהודיה' });
+    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
+    assert.ok(!queue.some((q) => q.type === MAP_TYPES.sector));
+    const entry = resolved.get(`${MAP_TYPES.sector}::${mappingKey(MAP_TYPES.sector, 'יהודיה')}`);
+    assert.equal(entry?.siteValue, 'יהודי');
+  });
+
+  test('an unrecognizable sector queues an operator prompt with the site options', async () => {
+    const raw = makeRawRow({ sector: 'ערבי' });
+    const { queue } = await collectMappingQueue([raw], FILE_ID, {});
+    const q = queue.find((x) => x.type === MAP_TYPES.sector);
+    assert.ok(q, 'expected a sector prompt');
+    assert.ok(q.suggestions.includes('מוסלמי'));
   });
 
   test('the family-classification tuple keys on the RESOLVED marital status', async () => {

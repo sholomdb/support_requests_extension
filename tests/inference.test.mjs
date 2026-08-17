@@ -6,6 +6,7 @@ import {
   routePhone,
   normalizeHolocaust,
   inferMaritalStatus,
+  inferSector,
 } from '../extension/shared/inference.js';
 
 describe('inferFamilyClassification', () => {
@@ -119,6 +120,28 @@ describe('inferMaritalStatus', () => {
   test('"לא ידוע" is NOT treated as ידוע/ה בציבור', () => {
     assert.equal(inferMaritalStatus('לא ידוע').needsInput, true);
     assert.equal(inferMaritalStatus('לא ידוע כלל').needsInput, true);
+  });
+});
+
+describe('inferSector', () => {
+  test('gender/spelling variants canonicalize to the site option', () => {
+    assert.equal(inferSector('יהודיה').value, 'יהודי');
+    assert.equal(inferSector('יהודית').value, 'יהודי');
+    assert.equal(inferSector('מוסלמית').value, 'מוסלמי');
+    assert.equal(inferSector('נוצריה').value, 'נוצרי');
+    assert.equal(inferSector('דרוזית').value, 'דרוזי');
+    assert.equal(inferSector('בדווי').value, 'בדואי');
+  });
+  test('exact site options pass through', () => {
+    assert.equal(inferSector('יהודי').value, 'יהודי');
+    assert.equal(inferSector('בדואי').value, 'בדואי');
+  });
+  test('unknown or missing values need operator input', () => {
+    assert.equal(inferSector('').needsInput, true);
+    assert.equal(inferSector('אחר').needsInput, true);
+  });
+  test('"ערבי" is ambiguous and goes to the operator', () => {
+    assert.equal(inferSector('ערבי').needsInput, true);
   });
 });
 

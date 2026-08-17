@@ -29,6 +29,7 @@ const TYPE_LABELS = {
   [MAP_TYPES.birthCountry]: 'ארץ לידה',
   [MAP_TYPES.familyClassification]: 'סיווג משפחה',
   [MAP_TYPES.maritalStatus]: 'מצב משפחתי',
+  [MAP_TYPES.sector]: 'מגזר',
 };
 
 /** Escapes text used inside an HTML attribute built via a template literal - values

@@ -44,10 +44,10 @@ any of this — it's the single place fix/validate logic lives.
 | idNumber | תעודת זהות | pad to 9 digits | must be 9 digits | 1 |
 | lastName / firstName | שם משפחה / שם פרטי | trim/normalize | required | 1 |
 | gender | מגדר | trim/normalize | required | 1 |
-| sector | מגזר | trim/normalize | required | 1 |
+| sector | מגזר | **mapped**, falls back to `inferSector` | required (resolved) | 1 |
 | ministryFileExists | (constant) | always `כן` | – | 1 |
 | mutavKnowledge | (constant) | always `כן` | – | 1 |
-| maritalStatus | מצב משפחתי | trim/normalize | required | 1 |
+| maritalStatus | מצב משפחתי | **mapped**, falls back to `inferMaritalStatus` | required (resolved) | 1 |
 | householdSize | נפשות | to string | must be > 0 | 1 |
 | holocaustSurvivor | ניצול שואה | normalize to כן/לא | – | 1 |
 | birthDate | תאריך לידה | normalize to DD/MM/YYYY | must match format | 1 |
