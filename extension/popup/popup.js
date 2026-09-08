@@ -1640,6 +1640,9 @@ function logFillResult(result, step) {
   if (!result?.ok && result?.error) {
     log(`Fill error: ${result.error}`);
   }
+  if (result?.insufficientBalance) {
+    log(`⚠ היתרה לניצול במקור התקציבי (${result.balance} ₪) קטנה מסכום הבקשה – הבקשה לא נשלחה`);
+  }
   if (result?.results?.length) {
     log(`Step ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} fields`);
     result.results.forEach((r) => {

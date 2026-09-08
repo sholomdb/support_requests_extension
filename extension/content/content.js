@@ -890,7 +890,115 @@ function clickModalSearchButton(scope, fieldId) {
   return clickDialogButton(root, ['חיפוש']);
 }
 
-async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
+/** The rendered rows of a lookup widget/modal (inline widget or dialog), visible ones only. */
+function collectLookupRows(scope) {
+  const rowScope = scope && scope.querySelectorAll ? scope : document;
+  let rows = [...rowScope.querySelectorAll('.MuiTableBody-root .MuiTableRow-root, tbody tr')];
+  if (!rows.length) rows = querySelectorAllDeep('.MuiTableBody-root .MuiTableRow-root, tbody tr');
+  return rows.filter(isVisible);
+}
+
+/** A row's display label: its first cell that reads like a name, not an id/blank/blob. */
+function lookupRowLabel(row) {
+  const cells = [...row.querySelectorAll('td')].map((td) => normalizeMatchText(td.textContent));
+  return cells.find((t) => t.length > 1 && t.length < 120) || '';
+}
+
+/** Parses a lookup cell as a number ("47,685", "1108 ₪"), or null when it isn't one. */
+function parseAmountCell(text) {
+  const t = normalizeText(text).replace(/[₪,\s]/g, '');
+  return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null;
+}
+
+/** Index of the "יתרה לניצול" column in the row's table, or -1 when it has no such header. */
+function lookupBalanceColumnIndex(row) {
+  const table = row.closest('table');
+  const headers = table ? [...table.querySelectorAll('thead th, thead td')] : [];
+  return headers.findIndex((th) => normalizeText(th.textContent).includes('יתרה'));
+}
+
+/** The source's remaining balance ("יתרה לניצול") as shown in its own row, or null when the
+ * row has none. Read by column header where there is one, else from the row's only
+ * purely-numeric cell - the name is text and the program id (a0RN…) contains letters. */
+function lookupRowBalance(row) {
+  const cells = [...row.querySelectorAll('td')];
+  const idx = lookupBalanceColumnIndex(row);
+  if (idx >= 0 && cells[idx]) {
+    const byHeader = parseAmountCell(cells[idx].textContent);
+    if (byHeader !== null) return byHeader;
+  }
+  for (const td of cells) {
+    const n = parseAmountCell(td.textContent);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+/** How well a rendered row matches the wanted value: 3 = exact, 2 = one contains the other,
+ * 1 = fuzzy word overlap, 0 = no match. Graded (rather than first-hit-wins) because budget
+ * source names differ only in their prefix - "אזרחים ותיקים תכנית סיוע חומרי בני ברק 2026"
+ * and "סיוע חירום למשפחות תכנית סיוע חומרי בני ברק 2026" share everything after it, so a
+ * loose match can silently pick the wrong source. */
+function lookupRowScore(rowLabel, searchText) {
+  const a = normalizeMatchText(rowLabel);
+  const e = normalizeMatchText(searchText);
+  if (!a || !e) return 0;
+  if (a === e) return 3;
+  if (a.includes(e) || e.includes(a)) return 2;
+  return textMatchesOption(a, e) ? 1 : 0;
+}
+
+/**
+ * Picks the row matching `searchText` out of the rows currently rendered. Returns
+ * { row } , { row: null } when nothing matches, or { row: null, ambiguous: [...] } when
+ * several rows tie at an inexact score - clicking a guess there would file the request
+ * against the wrong budget, so the caller fails the step instead.
+ */
+function pickLookupRow(rows, searchText) {
+  let best = null;
+  let bestScore = 0;
+  const tied = [];
+  for (const row of rows) {
+    const label = lookupRowLabel(row);
+    const score = lookupRowScore(label, searchText);
+    if (!score) continue;
+    if (score > bestScore) {
+      bestScore = score;
+      best = row;
+      tied.length = 0;
+      tied.push(label);
+    } else if (score === bestScore) {
+      tied.push(label);
+    }
+  }
+  if (!best) return { row: null };
+  // Identical labels at an exact match are interchangeable; an inexact tie is not.
+  if (bestScore < 3 && tied.length > 1) return { row: null, ambiguous: tied };
+  return { row: best };
+}
+
+/** Advances a lookup table to its next page, for lists longer than one page. Returns false
+ * when there's no next page (or the control is disabled), which ends the scan. */
+function clickLookupNextPage(scope) {
+  const root = scope && scope.querySelector ? scope : document;
+  const btn =
+    root.querySelector('.MuiTablePagination-actions button:last-of-type') ||
+    root.querySelector('button[aria-label*="next" i], button[aria-label*="הבא"]');
+  if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true' || !isVisible(btn)) {
+    return false;
+  }
+  dispatchClick(btn);
+  return true;
+}
+
+/**
+ * Fills a lookup field by picking its row in the lookup widget/modal.
+ * `opts.skipSearch` skips the search box entirely and scans the rows the widget already
+ * renders - used for the budget source (#e424), whose "חיפוש" button doesn't filter, so
+ * searching only ever left the full (or an empty) list behind.
+ * `opts.minBalance` refuses to select a matched row whose "יתרה לניצול" can't cover it.
+ */
+async function fillMuiLookupField(selector, searchText, waitMs = 2000, opts = {}) {
   const parts = findMuiFieldInput(selector);
   const fieldId = fieldIdFromSelector(selector);
   const target = normalizeMatchText(searchText);
@@ -928,43 +1036,76 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
     );
   }
 
-  if (searchInput) {
-    dispatchClick(searchInput);
-    searchInput.focus();
-    await typeIntoMuiInput(searchInput, searchText, true);
-    await sleep(300);
-    // Some builds filter on Enter, others need the search button clicked - do both.
-    dispatchKey(searchInput, 'Enter', 13);
-    await sleep(150);
+  if (!opts.skipSearch) {
+    if (searchInput) {
+      dispatchClick(searchInput);
+      searchInput.focus();
+      await typeIntoMuiInput(searchInput, searchText, true);
+      await sleep(300);
+      // Some builds filter on Enter, others need the search button clicked - do both.
+      dispatchKey(searchInput, 'Enter', 13);
+      await sleep(150);
+    }
+    clickModalSearchButton(scope, fieldId);
+    await sleep(waitMs);
+  } else {
+    // No search: the widget lists every source on its own, so just wait for the rows.
+    for (let i = 0; i < 15 && !collectLookupRows(scope).length; i++) await sleep(200);
   }
 
-  clickModalSearchButton(scope, fieldId);
-  await sleep(waitMs);
-
   // Results render in a table within the widget/modal scope; fall back to a document-wide
-  // scan if the scope is a narrow inline container.
-  const rowScope = scope && scope.querySelectorAll ? scope : document;
-  let rows = rowScope.querySelectorAll('.MuiTableBody-root .MuiTableRow-root, tbody tr');
-  if (!rows.length) rows = querySelectorAllDeep('.MuiTableBody-root .MuiTableRow-root, tbody tr');
-
+  // scan if the scope is a narrow inline container. Lists longer than one page are paged
+  // through (bounded) rather than assumed to fit on the first.
   let matchedRow = null;
-  for (const row of rows) {
-    if (!isVisible(row)) continue;
-    const textCells = [...row.querySelectorAll('td')].map((td) => normalizeMatchText(td.textContent));
-    const rowLabel = textCells.find((t) => t.length > 1 && t.length < 120) || '';
-    if (
-      rowLabel &&
-      (textMatchesOption(rowLabel, searchText) ||
-        rowLabel.includes(target) ||
-        target.includes(rowLabel))
-    ) {
-      matchedRow = row;
+  let ambiguous = null;
+  let scanned = 0;
+  // 6 pages max - nothing in this file declares a top-level const (a re-injected content
+  // script would throw "already declared"), so the bound lives here.
+  for (let page = 0; page < 6; page++) {
+    const rows = collectLookupRows(scope);
+    scanned += rows.length;
+    const picked = pickLookupRow(rows, searchText);
+    if (picked.row) {
+      matchedRow = picked.row;
       break;
     }
+    if (picked.ambiguous) {
+      ambiguous = picked.ambiguous;
+      break;
+    }
+    if (!clickLookupNextPage(scope)) break;
+    await sleep(600);
+  }
+
+  if (ambiguous) {
+    return { ok: false, reason: `כמה מקורות תואמים ל"${searchText}": ${ambiguous.join(' | ')}` };
   }
 
   if (!matchedRow) {
-    return { ok: false, reason: 'no matching row in lookup table' };
+    return {
+      ok: false,
+      reason: scanned
+        ? `לא נמצא "${searchText}" ברשימה (${scanned} שורות נסרקו)`
+        : 'no matching row in lookup table',
+    };
+  }
+
+  // Balance guard: each row shows that source's "יתרה לניצול". A source that can't cover
+  // this request is never selected - the caller fails the request on the spot instead of
+  // filing it against a budget that can't fund it. An unreadable balance doesn't block.
+  if (opts.minBalance > 0) {
+    const balance = lookupRowBalance(matchedRow);
+    // Same rule the allocator funds by (pipeline.js allocateSources): a source is never
+    // drained below 1 ₪, so covering an amount takes balance - amount >= 1.
+    if (balance !== null && balance - opts.minBalance < 1) {
+      return {
+        ok: false,
+        insufficientBalance: true,
+        balance,
+        value: lookupRowLabel(matchedRow),
+        reason: `יתרה לניצול ${balance} ₪ אינה מספיקה לסכום ${opts.minBalance} ₪ (יש להשאיר ₪1 במקור)`,
+      };
+    }
   }
 
   const radio =
@@ -991,9 +1132,9 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000) {
   return { ok: saved, value: actual || searchText, matched: saved ? searchText : 'row selected' };
 }
 
-async function fillSearchField(selector, searchText, waitMs = 1500) {
+async function fillSearchField(selector, searchText, waitMs = 1500, opts = {}) {
   if (isMuiLookupField(selector)) {
-    return fillMuiLookupField(selector, searchText, waitMs);
+    return fillMuiLookupField(selector, searchText, waitMs, opts);
   }
 
   const parts = findMuiFieldInput(selector);
@@ -1503,8 +1644,27 @@ async function fillWhoHowMPage(prepared, selectors, delayMs, searchWaitMs) {
   }
 
   if (s.budgetSource && prepared.budgetSourceSearch) {
-    const src = await fillSearchField(s.budgetSource, prepared.budgetSourceSearch, searchWaitMs);
-    results.push({ field: 'budgetSource', ok: src.ok, label: 'מקור תקציב', value: prepared.budgetSourceSearch });
+    // skipSearch: the budget-source widget's "חיפוש" button doesn't filter its list, so the
+    // source is picked by scanning the (short) list of sources it renders on its own.
+    const src = await fillSearchField(s.budgetSource, prepared.budgetSourceSearch, searchWaitMs, {
+      skipSearch: true,
+      minBalance: Number(prepared.amount) || 0,
+    });
+    results.push({
+      field: 'budgetSource',
+      ok: src.ok,
+      label: 'מקור תקציב',
+      value: prepared.budgetSourceSearch,
+      reason: src.reason,
+    });
+    // The source can't fund this request: stop the stage here rather than filling a sum and
+    // a supplier onto a form that must not be submitted (the popup marks the stage FAILED).
+    if (src.insufficientBalance) {
+      return buildStepResult(3, 'WhoHowM', results, {
+        insufficientBalance: true,
+        balance: src.balance,
+      });
+    }
     await sleep(delayMs);
   }
 
