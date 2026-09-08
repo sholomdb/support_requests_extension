@@ -16,7 +16,7 @@ function normalizeMarital(status) {
 }
 
 /** The site's marital-status dropdown options (canonical values). */
-export const MARITAL_OPTIONS = ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמן/ה', 'פרוד/ה', 'ידוע/ה בציבור'];
+export const MARITAL_OPTIONS = ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמנ/ה', 'פרוד/ה', 'ידוע/ה בציבור'];
 
 /**
  * Canonicalizes an Excel marital status to the site's dropdown value - Excel files carry
@@ -33,9 +33,35 @@ export function inferMaritalStatus(value) {
   if (m.includes('נשוי') || m.includes('נשוא')) return { value: 'נשוי/אה' };
   if (m.includes('רווק')) return { value: 'רווק/ה' };
   if (m.includes('גרוש')) return { value: 'גרוש/ה' };
-  if (m.includes('אלמ')) return { value: 'אלמן/ה' };
+  if (m.includes('אלמ')) return { value: 'אלמנ/ה' };
   if (m.includes('פרוד')) return { value: 'פרוד/ה' };
   return { needsInput: true, reason: `unrecognized marital status "${m}"` };
+}
+
+/** The site's sector dropdown options (#e210), in the order the site lists them.
+ * These strings must match the dropdown verbatim to be selectable. */
+export const SECTOR_OPTIONS = ['דרוזי', 'יהודי', 'מוסלמי', 'נוצרי', 'בדואי', 'אחר/טרם נמסר'];
+
+/**
+ * Canonicalizes an Excel sector to the site's dropdown value - Excel files carry gender and
+ * spelling variants (יהודיה, מוסלמית, בדווי…) that don't text-match the site's options.
+ * Root-based, like inferMaritalStatus. "ערבי" is deliberately NOT inferred: it could be
+ * מוסלמי, נוצרי or בדואי, so it goes to the operator once and is saved as a mapping.
+ * A blank cell is also left to the operator (who can pick "אחר/טרם נמסר") rather than
+ * being auto-filled as unreported. Returns { value } or { needsInput: true }.
+ */
+export function inferSector(value) {
+  const s = normalizeText(value);
+  if (!s) return { needsInput: true, reason: 'missing sector' };
+  if (SECTOR_OPTIONS.includes(s)) return { value: s };
+  if (s.includes('יהוד')) return { value: 'יהודי' };
+  if (s.includes('מוסלמ') || s.includes('מסלמ')) return { value: 'מוסלמי' };
+  // מוצר* catches the common נ/מ typo in the source data.
+  if (s.includes('נוצר') || s.includes('מוצר')) return { value: 'נוצרי' };
+  if (s.includes('דרוז')) return { value: 'דרוזי' };
+  if (s.includes('בדוא') || s.includes('בדוו')) return { value: 'בדואי' };
+  if (s.includes('אחר') || s.includes('טרם נמסר')) return { value: 'אחר/טרם נמסר' };
+  return { needsInput: true, reason: `unrecognized sector "${s}"` };
 }
 
 function isSingleParent(maritalStatus) {

@@ -44,10 +44,10 @@ any of this — it's the single place fix/validate logic lives.
 | idNumber | תעודת זהות | pad to 9 digits | must be 9 digits | 1 |
 | lastName / firstName | שם משפחה / שם פרטי | trim/normalize | required | 1 |
 | gender | מגדר | trim/normalize | required | 1 |
-| sector | מגזר | trim/normalize | required | 1 |
+| sector | מגזר | **mapped**, falls back to `inferSector` | required (resolved) | 1 |
 | ministryFileExists | (constant) | always `כן` | – | 1 |
 | mutavKnowledge | (constant) | always `כן` | – | 1 |
-| maritalStatus | מצב משפחתי | trim/normalize | required | 1 |
+| maritalStatus | מצב משפחתי | **mapped**, falls back to `inferMaritalStatus` | required (resolved) | 1 |
 | householdSize | נפשות | to string | must be > 0 | 1 |
 | holocaustSurvivor | ניצול שואה | normalize to כן/לא | – | 1 |
 | birthDate | תאריך לידה | normalize to DD/MM/YYYY | must match format | 1 |
@@ -151,6 +151,43 @@ ignored/treated as drags by this drag-and-drop-capable UI. If even this can't dr
 the item click (while a manual click works), the remaining gap is `event.isTrusted`,
 which no DOM dispatch can fake - that would require driving input via the Chrome
 DevTools Protocol (`chrome.debugger` + `Input.dispatchMouseEvent`).
+
+## Budget source (`#e424`): pick from the list, don't search
+
+The "בחירת מקור תקציבי" widget has a search box and a "חיפוש" button, but the button
+doesn't filter its list on this form - typing a source name and searching just left the
+full (or an empty) list behind, so the fill never found its row. `fillMuiLookupField`
+therefore takes a `skipSearch` option (passed for `budgetSource` only, in
+`fillWhoHowMPage`): it skips the search box entirely, waits for the widget's own rows to
+render, and picks the matching one out of the handful of sources listed. Up to 6 pages
+are scanned via the table's next-page control, in case a list doesn't fit on one page.
+
+Rows are matched by `lookupRowScore`: **3** = exact, **2** = one string contains the
+other, **1** = fuzzy word overlap, and the best-scoring row wins. The grading matters
+because source names differ only in their *prefix* - "אזרחים ותיקים תכנית סיוע חומרי
+בני ברק 2026" and "סיוע חירום למשפחות תכנית סיוע חומרי בני ברק 2026" share everything
+after it - so a first-hit-wins loose match could file a request against the wrong
+budget. If several rows tie at an inexact score, the step fails with the tied names in
+its reason instead of clicking a guess; if nothing matches, the reason reports how many
+rows were scanned. Both show up in the side panel's fill log.
+
+### Balance guard at fill time
+
+Each row in that widget also shows the source's **"יתרה לניצול"**, so the matched row is
+checked against the request's amount before it's selected (`opts.minBalance`). The rule is
+the allocator's own (`allocateSources`): a source is never drained below 1 ₪, so covering
+an amount needs `balance - amount >= 1`. If it doesn't, the source is *not* selected, the
+stage returns `insufficientBalance` and stops right there - no amount, no supplier, and
+`allFieldsOk` false means the popup marks stage 3 FAILED and never clicks submit. The
+balance and the shortfall are logged in Hebrew in the side panel.
+
+This is the live, last-line check. The planning-time equivalent is `allocateSources`,
+which splits/flags requests from the balances snapshot read off the home-page table -
+this one catches a snapshot that has gone stale since (another operator spending from the
+same source, a fill earlier in the same batch). A balance cell that can't be parsed never
+blocks the fill.
+
+The supplier lookup still uses the search path - its modal search works.
 
 ## Catalog: item existence, prices, and splitting
 
