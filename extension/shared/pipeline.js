@@ -67,7 +67,7 @@ const FIELD_PIPELINE = [
     key: 'sector',
     step: 1,
     // Categorical: Excel carries gender/spelling variants (יהודיה, מוסלמית, בדווי…) that
-    // don't match the site's דרוזי/יהודי/מוסלמי/נוצרי/בדואי options. Known roots
+    // don't match the site's דרוזי/יהודי/מוסלמי/מוצרי/בדואי/אחר-טרם נמסר options. Known roots
     // canonicalize automatically (inferFallback); anything else (e.g. "ערבי") prompts the
     // operator once and is saved as a mapping.
     mapType: MAP_TYPES.sector,

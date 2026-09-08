@@ -128,17 +128,26 @@ describe('inferSector', () => {
     assert.equal(inferSector('יהודיה').value, 'יהודי');
     assert.equal(inferSector('יהודית').value, 'יהודי');
     assert.equal(inferSector('מוסלמית').value, 'מוסלמי');
-    assert.equal(inferSector('נוצריה').value, 'נוצרי');
     assert.equal(inferSector('דרוזית').value, 'דרוזי');
     assert.equal(inferSector('בדווי').value, 'בדואי');
+  });
+  test('the Excel spelling נוצרי maps onto the site\'s "מוצרי" option', () => {
+    assert.equal(inferSector('נוצרי').value, 'מוצרי');
+    assert.equal(inferSector('נוצריה').value, 'מוצרי');
+    assert.equal(inferSector('מוצרי').value, 'מוצרי');
   });
   test('exact site options pass through', () => {
     assert.equal(inferSector('יהודי').value, 'יהודי');
     assert.equal(inferSector('בדואי').value, 'בדואי');
+    assert.equal(inferSector('אחר/טרם נמסר').value, 'אחר/טרם נמסר');
+  });
+  test('אחר / טרם נמסר wording resolves to the catch-all option', () => {
+    assert.equal(inferSector('אחר').value, 'אחר/טרם נמסר');
+    assert.equal(inferSector('טרם נמסר').value, 'אחר/טרם נמסר');
   });
   test('unknown or missing values need operator input', () => {
     assert.equal(inferSector('').needsInput, true);
-    assert.equal(inferSector('אחר').needsInput, true);
+    assert.equal(inferSector('לא רלוונטי').needsInput, true);
   });
   test('"ערבי" is ambiguous and goes to the operator', () => {
     assert.equal(inferSector('ערבי').needsInput, true);
