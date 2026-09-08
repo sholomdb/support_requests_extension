@@ -39,16 +39,14 @@ export function inferMaritalStatus(value) {
 }
 
 /** The site's sector dropdown options (#e210), in the order the site lists them.
- * NOTE: the site spells the Christian option "מוצרי" (apparent typo for
- * "נוצרי") - these strings must match the dropdown verbatim to be
- * selectable, so inferSector maps the Excel spelling נוצרי onto it. */
-export const SECTOR_OPTIONS = ['דרוזי', 'יהודי', 'מוסלמי', 'מוצרי', 'בדואי', 'אחר/טרם נמסר'];
+ * These strings must match the dropdown verbatim to be selectable. */
+export const SECTOR_OPTIONS = ['דרוזי', 'יהודי', 'מוסלמי', 'נוצרי', 'בדואי', 'אחר/טרם נמסר'];
 
 /**
  * Canonicalizes an Excel sector to the site's dropdown value - Excel files carry gender and
  * spelling variants (יהודיה, מוסלמית, בדווי…) that don't text-match the site's options.
  * Root-based, like inferMaritalStatus. "ערבי" is deliberately NOT inferred: it could be
- * מוסלמי, מוצרי or בדואי, so it goes to the operator once and is saved as a mapping.
+ * מוסלמי, נוצרי or בדואי, so it goes to the operator once and is saved as a mapping.
  * A blank cell is also left to the operator (who can pick "אחר/טרם נמסר") rather than
  * being auto-filled as unreported. Returns { value } or { needsInput: true }.
  */
@@ -58,8 +56,8 @@ export function inferSector(value) {
   if (SECTOR_OPTIONS.includes(s)) return { value: s };
   if (s.includes('יהוד')) return { value: 'יהודי' };
   if (s.includes('מוסלמ') || s.includes('מסלמ')) return { value: 'מוסלמי' };
-  // The site's own (misspelled) option is מוצרי; Excel writes נוצרי/נוצריה.
-  if (s.includes('נוצר') || s.includes('מוצר')) return { value: 'מוצרי' };
+  // מוצר* catches the common נ/מ typo in the source data.
+  if (s.includes('נוצר') || s.includes('מוצר')) return { value: 'נוצרי' };
   if (s.includes('דרוז')) return { value: 'דרוזי' };
   if (s.includes('בדוא') || s.includes('בדוו')) return { value: 'בדואי' };
   if (s.includes('אחר') || s.includes('טרם נמסר')) return { value: 'אחר/טרם נמסר' };

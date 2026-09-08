@@ -47,7 +47,7 @@ export const DEFAULT_SEEDS = {
   familyClassification: {},
   // Starts empty like maritalStatus: Excel gender/spelling variants (יהודיה, מוסלמית,
   // בדווי…) canonicalize via inferSector, and anything else is an operator decision
-  // (e.g. "ערבי", which could be מוסלמי or מוצרי) saved as a mapping on first prompt.
+  // (e.g. "ערבי", which could be מוסלמי or נוצרי) saved as a mapping on first prompt.
   sector: {},
 };
 

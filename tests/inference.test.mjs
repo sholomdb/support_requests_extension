@@ -131,10 +131,10 @@ describe('inferSector', () => {
     assert.equal(inferSector('דרוזית').value, 'דרוזי');
     assert.equal(inferSector('בדווי').value, 'בדואי');
   });
-  test('the Excel spelling נוצרי maps onto the site\'s "מוצרי" option', () => {
-    assert.equal(inferSector('נוצרי').value, 'מוצרי');
-    assert.equal(inferSector('נוצריה').value, 'מוצרי');
-    assert.equal(inferSector('מוצרי').value, 'מוצרי');
+  test('נוצרי variants - including the נ/מ typo - resolve to נוצרי', () => {
+    assert.equal(inferSector('נוצרי').value, 'נוצרי');
+    assert.equal(inferSector('נוצריה').value, 'נוצרי');
+    assert.equal(inferSector('מוצרי').value, 'נוצרי');
   });
   test('exact site options pass through', () => {
     assert.equal(inferSector('יהודי').value, 'יהודי');
