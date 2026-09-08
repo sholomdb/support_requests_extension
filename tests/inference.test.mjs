@@ -103,8 +103,8 @@ describe('inferMaritalStatus', () => {
     assert.equal(inferMaritalStatus('נשוי').value, 'נשוי/אה');
     assert.equal(inferMaritalStatus('נשואה').value, 'נשוי/אה');
     assert.equal(inferMaritalStatus('גרושה').value, 'גרוש/ה');
-    assert.equal(inferMaritalStatus('אלמן').value, 'אלמן/ה');
-    assert.equal(inferMaritalStatus('אלמנה').value, 'אלמן/ה');
+    assert.equal(inferMaritalStatus('אלמן').value, 'אלמנ/ה');
+    assert.equal(inferMaritalStatus('אלמנה').value, 'אלמנ/ה');
     assert.equal(inferMaritalStatus('רווקה').value, 'רווק/ה');
     assert.equal(inferMaritalStatus('פרודה').value, 'פרוד/ה');
     assert.equal(inferMaritalStatus('ידועה בציבור').value, 'ידוע/ה בציבור');

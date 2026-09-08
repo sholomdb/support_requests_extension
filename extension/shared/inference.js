@@ -16,7 +16,7 @@ function normalizeMarital(status) {
 }
 
 /** The site's marital-status dropdown options (canonical values). */
-export const MARITAL_OPTIONS = ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמן/ה', 'פרוד/ה', 'ידוע/ה בציבור'];
+export const MARITAL_OPTIONS = ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמנ/ה', 'פרוד/ה', 'ידוע/ה בציבור'];
 
 /**
  * Canonicalizes an Excel marital status to the site's dropdown value - Excel files carry
@@ -33,7 +33,7 @@ export function inferMaritalStatus(value) {
   if (m.includes('נשוי') || m.includes('נשוא')) return { value: 'נשוי/אה' };
   if (m.includes('רווק')) return { value: 'רווק/ה' };
   if (m.includes('גרוש')) return { value: 'גרוש/ה' };
-  if (m.includes('אלמ')) return { value: 'אלמן/ה' };
+  if (m.includes('אלמ')) return { value: 'אלמנ/ה' };
   if (m.includes('פרוד')) return { value: 'פרוד/ה' };
   return { needsInput: true, reason: `unrecognized marital status "${m}"` };
 }

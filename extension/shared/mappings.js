@@ -1,7 +1,7 @@
 import { normalizeText, normalizeCity } from './utils.js';
 import { BUDGET_LABELS } from './config.js';
 import { catalogItemNames } from './catalog-data.js';
-import { SECTOR_OPTIONS } from './inference.js';
+import { MARITAL_OPTIONS, SECTOR_OPTIONS } from './inference.js';
 
 export const MAP_TYPES = {
   budgetType: 'budgetType',
@@ -162,7 +162,7 @@ export const HARDCODED_SUGGESTIONS = {
   [MAP_TYPES.birthCountry]: ['ישראל', 'אחר', 'אסיה', 'ארצות המערב', 'מזרח אירופה', 'ארצות ערב', 'אתיופיה', 'דרום אמריקה', 'חמ"ע FSU', 'אפריקה'],
   [MAP_TYPES.city]: ['אלעד', 'ביתר עילית', 'בני ברק', 'ועד יהודי חברון', 'בית אל', 'מודיעין עילית', 'מטה בנימין'],
   [MAP_TYPES.familyClassification]: ['משפחה עם זוג הורים', 'משפחה עם הורה עצמאי  (חד הוריות)', 'זוג ללא ילדים', 'בודד'],
-  [MAP_TYPES.maritalStatus]: ['נשוי/אה', 'רווק/ה', 'גרוש/ה', 'אלמן/ה', 'פרוד/ה', 'ידוע/ה בציבור'],
+  [MAP_TYPES.maritalStatus]: MARITAL_OPTIONS,
   [MAP_TYPES.sector]: SECTOR_OPTIONS,
   [MAP_TYPES.item]: catalogItemNames(),
   [MAP_TYPES.budgetSource]: [],
