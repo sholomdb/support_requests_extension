@@ -154,7 +154,6 @@ async function init() {
 
   $('fileInput').addEventListener('change', handleFileUpload);
   $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
-  $('newRecordBtn').addEventListener('click', startNewRecord);
   $('loginBtn').addEventListener('click', loginToSite);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
@@ -1224,20 +1223,6 @@ async function loginToSite() {
   await persistLog();
 }
 
-async function startNewRecord() {
-  try {
-    const result = await sendToContent({ type: 'START_NEW_RECORD', selectors: settings.selectors });
-    if (result.ok) {
-      log('נלחץ "רשומה חדשה" – ממתין לדף MUTAV');
-      setTimeout(refreshPageStatus, 1500);
-    } else {
-      log('כפתור "רשומה חדשה" לא נמצא – עבור לדף הבית תחילה');
-    }
-  } catch (err) {
-    log(`שגיאה: ${err.message}`);
-  }
-}
-
 /** Navigates the FormTitan tab to the home page and waits for it to load. */
 async function goHome() {
   const tab = await getFormTitanTab();
@@ -1311,7 +1296,7 @@ async function fillOneRequest() {
  * "stop" toggle while a batch is running. */
 function setAutomationRunning(on, batch = false) {
   automationRunning = on;
-  ['newRecordBtn', 'markSuccessBtn', 'markFailureBtn'].forEach((id) => {
+  ['markSuccessBtn', 'markFailureBtn'].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = on;
   });
@@ -1423,7 +1408,8 @@ async function refreshPageStatus() {
   try {
     const info = await getPageInfoForTab();
     const labels = {
-      home: 'דף הבית – לחץ "רשומה חדשה"',
+      // Points at the SITE's own button - the panel no longer has one of its own.
+      home: 'דף הבית – לחץ "רשומה חדשה" באתר',
       mutav: 'MUTAV – מילוי שלב 1',
       catalog: 'CATALOG – מילוי שלב 2',
       whohowm: 'WhoHowM – מילוי שלב 3',
