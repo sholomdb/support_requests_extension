@@ -289,14 +289,28 @@ async function clickButton(selector) {
   return true;
 }
 
-async function waitForLookupComplete(lastNameSelector, timeoutMs) {
+/**
+ * Waits for the ת.ז. lookup to actually come back, by watching the שם משפחה field: it either
+ * fills in (existing מוטב) or becomes editable (new one). Two guards against calling it too
+ * early - the lookup can take seconds on a slow load:
+ *  - a grace period before the first read, because the details fields keep their pre-search
+ *    state for the first instants after the click (often already editable), which used to
+ *    read as "ready" before the site had answered at all;
+ *  - the ready state must hold for two consecutive reads, so a mid-render frame doesn't
+ *    look finished.
+ * Polls throughout, so a fast lookup still continues immediately after the grace period.
+ */
+async function waitForLookupComplete(lastNameSelector, timeoutMs, graceMs = 1200) {
   const start = Date.now();
+  await sleep(Math.min(graceMs, timeoutMs));
+  let stable = 0;
   while (Date.now() - start < timeoutMs) {
     const el = querySelector(lastNameSelector);
     const input = el?.matches('input, textarea') ? el : el?.querySelector('input, textarea');
-    if (input?.value?.trim()) return true;
-    if (input && isEditable(input)) return true;
-    await sleep(300);
+    const ready = !!input && (!!input.value?.trim() || isEditable(input));
+    stable = ready ? stable + 1 : 0;
+    if (stable >= 2) return true;
+    await sleep(250);
   }
   return false;
 }
@@ -898,6 +912,18 @@ function collectLookupRows(scope) {
   return rows.filter(isVisible);
 }
 
+/** Waits for a lookup table to actually render rows - they arrive asynchronously, both for a
+ * search's results and for the list an inline widget renders on open. Returns as soon as any
+ * row is there, or whatever is rendered at the deadline (possibly nothing). */
+async function waitForLookupRows(scope, deadline) {
+  let rows = collectLookupRows(scope);
+  while (!rows.length && Date.now() < deadline) {
+    await sleep(250);
+    rows = collectLookupRows(scope);
+  }
+  return rows;
+}
+
 /** A row's display label: its first cell that reads like a name, not an id/blank/blob. */
 function lookupRowLabel(row) {
   const cells = [...row.querySelectorAll('td')].map((td) => normalizeMatchText(td.textContent));
@@ -1047,11 +1073,15 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000, opts = {}
       await sleep(150);
     }
     clickModalSearchButton(scope, fieldId);
+    // waitMs settles the table (a stale result set can still be on screen right after the
+    // click); waitForLookupRows below is what actually waits for the results.
     await sleep(waitMs);
-  } else {
-    // No search: the widget lists every source on its own, so just wait for the rows.
-    for (let i = 0; i < 15 && !collectLookupRows(scope).length; i++) await sleep(200);
   }
+
+  // Results can arrive well after the search click / widget open, so poll for them rather
+  // than reading the table once. The deadline is shared across pages so a slow lookup can't
+  // multiply into a per-page wait.
+  const rowDeadline = Date.now() + Math.max(waitMs * 4, 12000);
 
   // Results render in a table within the widget/modal scope; fall back to a document-wide
   // scan if the scope is a narrow inline container. Lists longer than one page are paged
@@ -1062,7 +1092,7 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000, opts = {}
   // 6 pages max - nothing in this file declares a top-level const (a re-injected content
   // script would throw "already declared"), so the bound lives here.
   for (let page = 0; page < 6; page++) {
-    const rows = collectLookupRows(scope);
+    const rows = await waitForLookupRows(scope, rowDeadline);
     scanned += rows.length;
     const picked = pickLookupRow(rows, searchText);
     if (picked.row) {
@@ -1124,15 +1154,21 @@ async function fillMuiLookupField(selector, searchText, waitMs = 2000, opts = {}
   if (!saved) saved = clickDialogButton(confirmScope, ['שמירה']);
   await sleep(500);
 
-  const actual = readFieldValue(selector);
-  if (actual && (textMatchesOption(actual, searchText) || normalizeMatchText(actual).includes(target))) {
-    return { ok: true, value: actual, matched: searchText };
+  // The field can take a moment to show the selection (the widget saves, then re-renders),
+  // so poll for it instead of reading once and reporting a false failure.
+  let actual = '';
+  for (let i = 0; i < 10; i++) {
+    actual = readFieldValue(selector);
+    if (actual && (textMatchesOption(actual, searchText) || normalizeMatchText(actual).includes(target))) {
+      return { ok: true, value: actual, matched: searchText };
+    }
+    await sleep(300);
   }
 
   return { ok: saved, value: actual || searchText, matched: saved ? searchText : 'row selected' };
 }
 
-async function fillSearchField(selector, searchText, waitMs = 1500, opts = {}) {
+async function fillSearchField(selector, searchText, waitMs = 3000, opts = {}) {
   if (isMuiLookupField(selector)) {
     return fillMuiLookupField(selector, searchText, waitMs, opts);
   }
@@ -1198,7 +1234,9 @@ async function fillMutavIdLookup(fields, selectors, delayMs, idLookupWaitMs) {
   results.push({ field: 'idLookup', ok: lookupOk, label: 'חיפוש ת.ז.', value: fields.idNumber });
   if (!lookupOk) return buildStepResult(1, 'MUTAV', results, { phase: 'id' });
 
-  const lookupReady = await waitForLookupComplete(s.lastName, idLookupWaitMs);
+  // Floor the configured wait: this is a watch-and-continue poll, not a fixed pause, so a
+  // short setting only ever cuts a slow lookup off early.
+  const lookupReady = await waitForLookupComplete(s.lastName, Math.max(idLookupWaitMs || 0, 12000));
   results.push({
     field: 'idLookupWait',
     ok: lookupReady,
@@ -1590,14 +1628,19 @@ async function selectBudget(group, labelIndex, budgetSiteValue, itemSearchSelect
   const buttonBase = label.querySelector('[class*="ButtonBase"], [class*="MuiRadio-root"]');
 
   // If it's already the selected catalog, we may already be rendered.
-  if (input?.checked && (await waitForCatalogRendered(itemSearchSelector, 1500))) return { ok: true };
+  if (input?.checked && (await waitForCatalogRendered(itemSearchSelector, 3000))) return { ok: true };
 
   // Try each interactive part in turn - one of them triggers MUI's selection.
   for (const el of [input, buttonBase, label]) {
     if (!el) continue;
     dispatchClick(el);
-    if (await waitForCatalogRendered(itemSearchSelector, 2500)) return { ok: true };
+    if (await waitForCatalogRendered(itemSearchSelector, 5000)) return { ok: true };
   }
+
+  // The item list can take a good while to render for a large budget. The clicks above have
+  // all landed by now, so keep watching (15s) instead of failing the moment the last
+  // per-click wait expired - waitForCatalogRendered returns as soon as it appears.
+  if (await waitForCatalogRendered(itemSearchSelector, 15000)) return { ok: true };
 
   return {
     ok: false,
@@ -1819,7 +1862,8 @@ async function handleMessage(message) {
   }
 
   if (message.type === 'FILL_STEP') {
-    const { step, prepared, selectors, delayMs = 400, idLookupWaitMs = 2000, searchWaitMs = 1500 } = message;
+    // Fallback values only - the popup sends the operator's configured settings.
+    const { step, prepared, selectors, delayMs = 400, idLookupWaitMs = 12000, searchWaitMs = 3000 } = message;
     const page = getPageType();
     let outcome;
 

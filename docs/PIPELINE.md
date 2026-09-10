@@ -152,6 +152,34 @@ the item click (while a manual click works), the remaining gap is `event.isTrust
 which no DOM dispatch can fake - that would require driving input via the Chrome
 DevTools Protocol (`chrome.debugger` + `Input.dispatchMouseEvent`).
 
+## Waiting for the site (`idLookupWaitMs` / `searchWaitMs`)
+
+Three points depend on how fast the site responds, and each **polls and continues the
+moment it's ready** - the configured number is a ceiling on how long to keep watching, not
+a fixed pause, so raising it costs nothing on a fast load:
+
+1. **After the ת.ז. search (stage 1)** — `waitForLookupComplete` watches שם משפחה until it
+   fills in (existing מוטב) or becomes editable (a new one). Two guards keep it from
+   declaring victory too early, which is what a slow lookup used to hit: a ~1.2s grace
+   period before the first read (the details fields keep their pre-search state, often
+   already editable, for the first instants after the click), and the ready state must hold
+   for two consecutive reads so a mid-render frame doesn't look finished. The configured
+   `idLookupWaitMs` is floored at 12s in the content script - it's a watch, so a short
+   setting only ever cuts a slow lookup off early.
+2. **After choosing the budget (stage 2)** — `selectBudget` gives each of its three click
+   targets 5s of `waitForCatalogRendered`, then keeps watching for a further 15s after the
+   last one. The clicks have all landed by then, so a big catalog that renders slowly is
+   just slow, not a failure.
+3. **After a lookup search (stage 3, supplier)** — the results table is polled
+   (`waitForLookupRows`) up to `max(searchWaitMs × 4, 12s)` instead of being read once after
+   a fixed sleep; the deadline is shared across pages so a slow lookup can't multiply into a
+   per-page wait. The selected value is likewise polled for ~3s afterwards, since the widget
+   saves and re-renders before the field shows it.
+
+Defaults moved with this: `idLookupWaitMs` 4000 → **12000**, `searchWaitMs` 1500 → **3000**,
+and Settings accepts up to 30s for both. An operator who had already saved the old values
+keeps them (they're merged over the defaults) - except for the stage-1 floor above.
+
 ## Budget source (`#e424`): pick from the list, don't search
 
 The "בחירת מקור תקציבי" widget has a search box and a "חיפוש" button, but the button
