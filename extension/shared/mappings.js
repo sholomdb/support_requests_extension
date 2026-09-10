@@ -51,6 +51,19 @@ export const DEFAULT_SEEDS = {
   sector: {},
 };
 
+/** Hebrew label per map type, for anything operator-facing (Settings + the mapping
+ * prompt in the side panel). Kept here so the two UIs can't drift apart. */
+export const MAP_TYPE_LABELS = {
+  [MAP_TYPES.city]: 'עיר',
+  [MAP_TYPES.budgetType]: 'סוג תקציב',
+  [MAP_TYPES.item]: 'פריט',
+  [MAP_TYPES.budgetSource]: 'מקור תקציב',
+  [MAP_TYPES.birthCountry]: 'ארץ לידה',
+  [MAP_TYPES.familyClassification]: 'סיווג משפחה',
+  [MAP_TYPES.maritalStatus]: 'מצב משפחתי',
+  [MAP_TYPES.sector]: 'מגזר',
+};
+
 export function mappingKey(type, excelValue, context = {}) {
   const val = normalizeText(excelValue);
   if (type === MAP_TYPES.budgetSource) {

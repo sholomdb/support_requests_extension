@@ -20,7 +20,7 @@ import {
   ROW_STATUS,
   STEP_STATUS,
 } from '../shared/pipeline.js';
-import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
+import { saveMapping, MAP_TYPES, MAP_TYPE_LABELS, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
 
@@ -311,7 +311,7 @@ async function handleFileUpload(e) {
     log(`נטען קובץ: ${session.requests.length} שורות, סה"כ ${formatCurrency(session.parsedFile.totalAmount)} ₪`);
     await persistLog();
   } catch (err) {
-    alert(`Error loading file: ${err.message}`);
+    alert(`שגיאה בטעינת הקובץ: ${err.message}`);
   } finally {
     e.target.value = '';
   }
@@ -376,7 +376,7 @@ function showFileUI(sess) {
     issues.length ? `⚠ ${issues.join(', ')}` : '✓ כל השורות מוכנות למילוי';
 
   const city = parsed.city;
-  $('loginId').textContent = findCityLoginId(settings.cities, city) || '(not set – open Settings)';
+  $('loginId').textContent = findCityLoginId(settings.cities, city) || '(לא הוגדר – פתח את ההגדרות)';
   renderRowList();
   updateProgress();
 }
@@ -391,16 +391,16 @@ function showCurrentRow() {
     : '';
 
   $('rowDetails').innerHTML = `
-    <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ID ${f.idNumber || ''}<br>
+    <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ת.ז. ${f.idNumber || ''}<br>
     📞 ${f.mobilePhone || f.homePhone || ''} | 🎂 ${f.birthDate || ''} | ${f.maritalStatus || ''}<br>
     📍 ${f.street || ''} ${f.building || ''}, ${f.settlement || f.citySearch || ''}<br>
-    <strong>Type:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
+    <strong>סוג בקשה:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
     <strong>מקור תקציב:</strong> ${
       request.outOfBudget ?
         `⚠ חורג מתקציב${request.sourceLabel ? ` (ימולא ל: ${request.sourceLabel})` : ''}`
       : request.sourceLabel || '—'
     }<br>
-    <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
+    <strong>סכום:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
   `;
   renderRowList();
@@ -456,7 +456,7 @@ function updateProgress() {
   const total = session.requests.length;
   const done = session.requests.filter(isRequestDone).length;
   $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
-  $('progressText').textContent = `${done} / ${total} done | row ${session.currentIndex + 1}`;
+  $('progressText').textContent = `הושלמו ${done} מתוך ${total} | שורה ${session.currentIndex + 1}`;
 }
 
 function updateStepTabs() {
@@ -573,7 +573,7 @@ function scoreFillResponse(response, phase) {
 async function sendToContent(message) {
   const tab = await getFormTitanTab();
   if (!tab?.id) {
-    throw new Error('No FormTitan tab – open ifcjil.formtitan.com and click the page');
+    throw new Error('לא נמצאה לשונית של האתר – פתח את ifcjil.formtitan.com ולחץ על הדף');
   }
 
   await ensureContentScript(tab.id);
@@ -692,7 +692,7 @@ async function sendToContent(message) {
 
     if (bestFrameId != null && bestScore > 0) lastWorkingFrameId = bestFrameId;
     if (best) return { ...best, frameId: bestFrameId };
-    throw new Error('Fill failed – form not found in any frame');
+    throw new Error('המילוי נכשל – הטופס לא נמצא באף פריים');
   }
 
   if (lastWorkingFrameId != null) {
@@ -706,7 +706,7 @@ async function sendToContent(message) {
 
 async function getPageInfoForTab() {
   const tab = await getFormTitanTab();
-  if (!tab?.id) return { ok: false, error: 'no tab' };
+  if (!tab?.id) return { ok: false, error: 'אין לשונית של האתר' };
 
   await ensureContentScript(tab.id);
 
@@ -759,7 +759,7 @@ const ADD_CATEGORY_OPTION = '__add_new_category__';
 
 function showMappingPrompt(item) {
   $('mappingSection').classList.remove('hidden');
-  $('mappingType').textContent = item.type;
+  $('mappingType').textContent = MAP_TYPE_LABELS[item.type] || item.type;
   $('mappingExcelValue').textContent = item.excelValue;
   $('mappingAffectedCount').textContent = String(item.affectedRowKeys?.length ?? 0);
 
@@ -916,7 +916,7 @@ async function saveMappingAndContinue() {
   const siteValue = currentPickerValue();
 
   if (!siteValue) {
-    alert('Enter a site value');
+    alert('הזן ערך לאתר');
     return;
   }
 
@@ -965,11 +965,11 @@ async function fillCurrentStep(stepOverride) {
         pageInfo.page
       : pageFromTabUrl(pageInfo.url) || 'unknown';
     if (page !== expectedPage && page !== 'unknown') {
-      log(`Warning: on ${page}, expected ${expectedPage}. Navigate first.`);
+      log(`אזהרה: נמצאים בדף ${page} במקום ${expectedPage} – נווט לדף הנכון תחילה.`);
     } else if (page === 'unknown') {
-      log(`Page not recognized (url: ${pageInfo.url}) – filling step ${step} anyway…`);
+      log(`הדף לא זוהה (${pageInfo.url}) – ממלא את שלב ${step} בכל זאת…`);
     } else {
-      log(`Page: ${page}${pageInfo.frameId != null ? ` (frame ${pageInfo.frameId})` : ''}`);
+      log(`דף: ${page}${pageInfo.frameId != null ? ` (פריים ${pageInfo.frameId})` : ''}`);
     }
 
     if (!isFillable(request)) {
@@ -978,7 +978,7 @@ async function fillCurrentStep(stepOverride) {
       return;
     }
 
-    if (step === 1) log('Step 1: fill ID → search → fill remaining fields');
+    if (step === 1) log('שלב 1: מילוי ת.ז., חיפוש, ואז שאר השדות');
 
     const prepared = { ok: true, fields: request.fields, ...request.fields };
     const fillPayload = {
@@ -993,7 +993,7 @@ async function fillCurrentStep(stepOverride) {
 
     let fieldsOk = false;
     if (step === 1) {
-      log('Filling ID and clicking search…');
+      log('ממלא ת.ז. ולוחץ על חיפוש…');
       const idResult = await sendToContent({ ...fillPayload, phase: 'id' });
       logFillResult(idResult, step);
 
@@ -1010,7 +1010,7 @@ async function fillCurrentStep(stepOverride) {
           selectors: settings.selectors,
         });
         if (verify?.ok) {
-          log(`ID verified on page (${verify.actual}) – continuing`);
+          log(`ת.ז. אומתה בדף (${verify.actual}) – ממשיך`);
           canContinue = true;
         }
       }
@@ -1021,7 +1021,7 @@ async function fillCurrentStep(stepOverride) {
         return;
       }
 
-      log('Filling remaining details…');
+      log('ממלא את שאר הפרטים…');
       const detailsResult = await sendToContent({ ...fillPayload, phase: 'details' });
       logFillResult(detailsResult, step);
       fieldsOk = allFieldsOk(detailsResult);
@@ -1049,7 +1049,7 @@ async function fillCurrentStep(stepOverride) {
 
     await advanceStep(step, fieldsOk, request);
   } catch (err) {
-    log(`Error: ${err.message}. Ensure FormTitan is the active tab.`);
+    log(`שגיאה: ${err.message}. ודא שלשונית האתר היא הלשונית הפעילה.`);
   } finally {
     await persistLog();
     renderRowList();
@@ -1228,13 +1228,13 @@ async function startNewRecord() {
   try {
     const result = await sendToContent({ type: 'START_NEW_RECORD', selectors: settings.selectors });
     if (result.ok) {
-      log('Clicked new record – wait for MUTAV page');
+      log('נלחץ "רשומה חדשה" – ממתין לדף MUTAV');
       setTimeout(refreshPageStatus, 1500);
     } else {
-      log('New record button not found – go to home page first');
+      log('כפתור "רשומה חדשה" לא נמצא – עבור לדף הבית תחילה');
     }
   } catch (err) {
-    log(`Error: ${err.message}`);
+    log(`שגיאה: ${err.message}`);
   }
 }
 
@@ -1423,19 +1423,19 @@ async function refreshPageStatus() {
   try {
     const info = await getPageInfoForTab();
     const labels = {
-      home: 'Home – click New Record',
-      mutav: 'MUTAV – fill step 1',
-      catalog: 'CATALOG – fill step 2',
-      whohowm: 'WhoHowM – fill step 3',
-      unknown: 'FormTitan – page unknown',
+      home: 'דף הבית – לחץ "רשומה חדשה"',
+      mutav: 'MUTAV – מילוי שלב 1',
+      catalog: 'CATALOG – מילוי שלב 2',
+      whohowm: 'WhoHowM – מילוי שלב 3',
+      unknown: 'FormTitan – הדף לא זוהה',
     };
     if (info?.ok && info.page) {
-      el.textContent = `✓ ${labels[info.page] || info.url}${info.frameId != null ? ` [frame ${info.frameId}]` : ''}`;
+      el.textContent = `✓ ${labels[info.page] || info.url}${info.frameId != null ? ` [פריים ${info.frameId}]` : ''}`;
     } else {
-      el.textContent = info?.url || 'Connected – reload page if fill fails';
+      el.textContent = info?.url || 'מחובר – רענן את הדף אם המילוי נכשל';
     }
   } catch {
-    el.textContent = 'Open FormTitan (ifcjil.formtitan.com) in a browser tab';
+    el.textContent = 'פתח את אתר FormTitan (ifcjil.formtitan.com) בלשונית';
   }
 }
 
@@ -1475,19 +1475,19 @@ function exportSessionFile() {
 
 function logFillResult(result, step) {
   if (!result?.ok && result?.error) {
-    log(`Fill error: ${result.error}`);
+    log(`שגיאת מילוי: ${result.error}`);
   }
   if (result?.insufficientBalance) {
     log(`⚠ היתרה לניצול במקור התקציבי (${result.balance} ₪) קטנה מסכום הבקשה – הבקשה לא נשלחה`);
   }
   if (result?.results?.length) {
-    log(`Step ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} fields`);
+    log(`שלב ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} שדות`);
     result.results.forEach((r) => {
       if (r.skipped) log(`  ⊘ ${r.label || r.field} – locked: "${r.value}"`);
       else log(`  ${r.ok ? '✓' : '✗'} ${r.label || r.field} = ${r.value ?? ''}${r.reason ? ` (${r.reason})` : ''}`);
     });
   } else if (result?.ok) {
-    log(`Step ${step} completed but no field details returned`);
+    log(`שלב ${step} הסתיים אך לא הוחזרו פרטי שדות`);
   }
 }
 
