@@ -114,8 +114,11 @@ export const DEFAULT_SETTINGS = {
   selectors: DEFAULT_SELECTORS,
   siteUrl: SITE.homeUrl,
   fillDelayMs: 400,
-  idLookupWaitMs: 4000,
-  searchWaitMs: 1500,
+  // Both are how long to keep WATCHING for a slow site response, not a fixed pause - the
+  // content script polls and continues the moment the page is ready (see waitForLookupComplete
+  // and the lookup row polling), so a generous value only costs time when the site is slow.
+  idLookupWaitMs: 12000,
+  searchWaitMs: 3000,
   // Max time to wait for any stage to navigate to its next page (step 1->2, 2->3, and the
   // final 3->home submit). Polling returns as soon as the page changes, so a fast transition
   // never waits this long; the budget is generous to avoid marking a slow-but-successful

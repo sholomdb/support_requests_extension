@@ -56,8 +56,8 @@ async function init() {
   await renderMappings();
   document.getElementById('siteUrl').value = settings.siteUrl || '';
   document.getElementById('fillDelayMs').value = settings.fillDelayMs || 400;
-  document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 2000;
-  document.getElementById('searchWaitMs').value = settings.searchWaitMs || 1500;
+  document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 12000;
+  document.getElementById('searchWaitMs').value = settings.searchWaitMs || 3000;
   document.getElementById('pageWaitMs').value = settings.pageWaitMs || 20000;
 
   document.getElementById('saveBtn').addEventListener('click', saveAll);
@@ -411,8 +411,8 @@ async function saveAll() {
   await saveCityCredentials(cityCredentials);
   settings.siteUrl = document.getElementById('siteUrl').value.trim();
   settings.fillDelayMs = Number(document.getElementById('fillDelayMs').value) || 400;
-  settings.idLookupWaitMs = Number(document.getElementById('idLookupWaitMs').value) || 2000;
-  settings.searchWaitMs = Number(document.getElementById('searchWaitMs').value) || 1500;
+  settings.idLookupWaitMs = Number(document.getElementById('idLookupWaitMs').value) || 12000;
+  settings.searchWaitMs = Number(document.getElementById('searchWaitMs').value) || 3000;
   settings.pageWaitMs = Number(document.getElementById('pageWaitMs').value) || 20000;
   // Selectors are defined in code (config.js DEFAULT_SELECTORS) only, not editable
   // here - drop any override left over from before, so code defaults always win.
@@ -476,8 +476,8 @@ async function importSettingsFile(file) {
     await renderMappings();
     document.getElementById('siteUrl').value = settings.siteUrl || '';
     document.getElementById('fillDelayMs').value = settings.fillDelayMs || 400;
-    document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 2000;
-    document.getElementById('searchWaitMs').value = settings.searchWaitMs || 1500;
+    document.getElementById('idLookupWaitMs').value = settings.idLookupWaitMs || 12000;
+    document.getElementById('searchWaitMs').value = settings.searchWaitMs || 3000;
     document.getElementById('pageWaitMs').value = settings.pageWaitMs || 20000;
 
     delete settings.selectors;
