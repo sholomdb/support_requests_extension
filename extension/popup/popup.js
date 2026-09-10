@@ -21,10 +21,8 @@ import {
   STEP_STATUS,
 } from '../shared/pipeline.js';
 import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
-import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
-import { runRequest, AUTH_ERROR } from '../shared/ft-flow.js';
 
 let settings = null;
 let session = null;
@@ -141,6 +139,11 @@ async function init() {
   await migrateBudgetSourceToLabelKeys();
   session = await getSession();
 
+  // The network-recorder UI is gone, so make sure a previously-armed recording can't stay
+  // on with no way to stop it (background.js only records while `apiRecording` is set), and
+  // drop any capture it left behind - nothing can export or clear it any more.
+  await chrome.storage.local.remove(['apiRecording', 'apiTrafficLog']);
+
   // Read straight from the manifest so it never drifts out of sync with the real version.
   $('appVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -154,18 +157,9 @@ async function init() {
   $('newRecordBtn').addEventListener('click', startNewRecord);
   $('loginBtn').addEventListener('click', loginToSite);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
-  $('apiRecToggleBtn').addEventListener('click', toggleApiRecording);
-  $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
-  $('apiRecClearBtn').addEventListener('click', clearApiTrafficLog);
-  $('apiTestBtn').addEventListener('click', testApiIdLookup);
-  $('apiDryRunBtn').addEventListener('click', apiDryRun);
-  refreshApiRecorderUI();
-  $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
   $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
   $('markFailureBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FAILED));
-  $('prevRowBtn').addEventListener('click', () => navigateRow(-1));
-  $('nextRowBtn').addEventListener('click', () => navigateRow(1));
   $('saveMappingBtn').addEventListener('click', saveMappingAndContinue);
   $('cancelMappingBtn').addEventListener('click', skipMappingAndContinue);
   $('mappingSiteValue').addEventListener('change', onMappingSiteValueChange);
@@ -1154,127 +1148,6 @@ async function readBudgetSourceBalances() {
   }
 }
 
-/** Dev tool: records the site's own API calls (via recorder-page/bridge content scripts)
- * so the request/response formats can be reverse-engineered for a request-based flow. */
-async function refreshApiRecorderUI() {
-  const { apiRecording, apiTrafficLog } = await chrome.storage.local.get(['apiRecording', 'apiTrafficLog']);
-  $('apiRecToggleBtn').textContent = apiRecording ? '⏹ עצור הקלטה' : '⏺ התחל הקלטה';
-  $('apiRecToggleBtn').classList.toggle('danger', Boolean(apiRecording));
-  $('apiRecCount').textContent = `${(apiTrafficLog || []).length} קריאות`;
-}
-
-// Live-update the recorded-calls counter while the operator works on the site.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && ('apiTrafficLog' in changes || 'apiRecording' in changes)) {
-    refreshApiRecorderUI().catch(() => {});
-  }
-});
-
-async function toggleApiRecording() {
-  const { apiRecording } = await chrome.storage.local.get('apiRecording');
-  await chrome.storage.local.set({ apiRecording: !apiRecording });
-  if (!apiRecording) log('הקלטת רשת החלה – בצע את התהליך באתר (רענן את הדף אם היה פתוח)');
-  else log('הקלטת רשת נעצרה');
-  await refreshApiRecorderUI();
-}
-
-async function exportApiTrafficLog() {
-  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
-  if (!apiTrafficLog?.length) {
-    alert('אין קריאות מוקלטות');
-    return;
-  }
-  const blob = new Blob([JSON.stringify(apiTrafficLog, null, 1)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `api-traffic-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function clearApiTrafficLog() {
-  await chrome.storage.local.remove('apiTrafficLog');
-  await refreshApiRecorderUI();
-}
-
-/** Phase 0 spike: prove we can replay the harvested session headers by doing the ID lookup
- * ourselves (get/sfmapping) and showing what comes back. */
-async function testApiIdLookup() {
-  const { ftAuth } = await chrome.storage.local.get('ftAuth');
-  if (!ftAuth?.headers) {
-    log('אין כותרות אימות שנלכדו – פתח/רענן את אתר FormTitan ובצע פעולה כלשהי, ואז נסה שוב');
-    return;
-  }
-  const suggested = session?.requests?.[session.currentIndex]?.fields?.idNumber || '';
-  const id = prompt('ת.ז. לבדיקת API (ID lookup):', suggested);
-  if (!id) return;
-  try {
-    const req = await buildIdLookupRequest(id.trim());
-    const res = await sendToContent({ type: 'API_FETCH', request: req });
-    if (!res?.ok) {
-      log(`API נכשל: ${res?.error || 'status ' + res?.status}`);
-      return;
-    }
-    if (isAuthFailure(res.status, res.text)) {
-      log('נראה שהסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
-      return;
-    }
-    const parsed = parseMappingResponse(res.text);
-    log(`API ${res.status}: status=${parsed.status} | ${Object.keys(parsed.fields || {}).length} שדות, ${Object.keys(parsed.params || {}).length} params`);
-    log(JSON.stringify(parsed.fields).slice(0, 600));
-  } catch (e) {
-    log(`שגיאה: ${e.message}`);
-  }
-  await persistLog();
-}
-
-/** Best-effort: pulls the logged-in account id (a123…, bound to guid ec14481b) out of any
- * recorded API traffic, so the dry run can resolve the budget-source/request-record too. It is
- * a session/city constant that never appears in a response, only in requests. */
-async function harvestAccountId() {
-  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
-  const guid = 'ec14481b-095b-44b8-875c-69e87aa34b2f';
-  for (const entry of apiTrafficLog || []) {
-    const body = typeof entry.requestBody === 'string' ? entry.requestBody : JSON.stringify(entry.requestBody || '');
-    const m = body.match(new RegExp(guid + '"\\s*:\\s*"(a[0-9A-Za-z]{5,})'));
-    if (m) return m[1];
-  }
-  return '';
-}
-
-/** Runs the headless GET/POST chain for the current request as a DRY RUN: discovers the field
- * ids from preview-page, resolves the SF ids via the read chain, and builds (without sending)
- * the pushes. The final submit (e361) is never fired. Proves the request-based flow end to end
- * on the live site and surfaces what's still missing (account id, page guid). */
-async function apiDryRun() {
-  const { ftAuth } = await chrome.storage.local.get('ftAuth');
-  if (!ftAuth?.headers) {
-    log('אין כותרות אימות שנלכדו – התחבר (🔑) או פתח/רענן את האתר, ואז נסה שוב');
-    return;
-  }
-  const request = session?.requests?.[session.currentIndex];
-  if (!request?.fields?.idNumber) {
-    log('אין בקשה נוכחית עם ת.ז. – טען קובץ ובחר בקשה');
-    return;
-  }
-  const fetchApi = (req) => sendToContent({ type: 'API_FETCH', request: req });
-  const accountId = await harvestAccountId();
-  const ctx = { accountId, dateISO: new Date().toISOString().slice(0, 10) };
-  log(`🧪 הרצת API יבשה לבקשה ${request.fields.idNumber}${accountId ? '' : ' (ללא accountId – מקור התקציב לא ייפתר)'}…`);
-  try {
-    const trace = await runRequest(request, { fetchApi, auth: ftAuth, ctx });
-    for (const line of trace.log) log(`   ${line}`);
-    const ids = trace.ids;
-    log(`מזהים: contact=${ids.contactId || '-'} | פריט=${ids.itemId || '-'} | מקור=${ids.sourceId || '-'} | יתרה=${ids.remaining ?? '-'} | רשומה=${ids.recordId || '-'}`);
-    log(`state של MUTAV (e238) נבנה עם ${Object.keys(JSON.parse(trace.requests.mutavPush.form.state)).length} שדות (לא נשלח)`);
-  } catch (e) {
-    if (e.code === AUTH_ERROR) log('הסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
-    else log(`הרצה יבשה נכשלה: ${e.message}`);
-  }
-  await persistLog();
-}
-
 /** Picks which city's credentials to log in with: the current file's city, else the only
  * configured one, else asks the operator to choose. Returns { city, loginId, password } or null. */
 async function pickLoginCredentials() {
@@ -1438,12 +1311,10 @@ async function fillOneRequest() {
  * "stop" toggle while a batch is running. */
 function setAutomationRunning(on, batch = false) {
   automationRunning = on;
-  ['newRecordBtn', 'fillRequestBtn', 'prevRowBtn', 'nextRowBtn', 'markSuccessBtn', 'markFailureBtn'].forEach(
-    (id) => {
-      const b = $(id);
-      if (b) b.disabled = on;
-    }
-  );
+  ['newRecordBtn', 'markSuccessBtn', 'markFailureBtn'].forEach((id) => {
+    const b = $(id);
+    if (b) b.disabled = on;
+  });
   document.querySelectorAll('.step-tab').forEach((tab) => {
     tab.disabled = on;
   });
@@ -1455,29 +1326,6 @@ function setAutomationRunning(on, batch = false) {
     } else {
       batchBtn.disabled = on;
     }
-  }
-}
-
-/** Button 1 — "מלא בקשה": fill only the current request, stopping on the first error
- * so the operator can finish that stage manually. */
-async function runFillRequest() {
-  if (automationRunning) return;
-  setAutomationRunning(true);
-  try {
-    const result = await fillOneRequest();
-    if (!result.ok && result.stoppedAt) {
-      currentStep = result.stoppedAt; // leave the operator on the failing stage
-      updateStepTabs();
-    }
-  } catch (err) {
-    log(`שגיאה: ${err.message}`);
-  } finally {
-    setAutomationRunning(false);
-    await persistLog();
-    showCurrentRow();
-    renderRowList();
-    updateProgress();
-    refreshPageStatus();
   }
 }
 
@@ -1567,17 +1415,6 @@ async function overrideRequestStatus(status) {
   showCurrentRow();
   renderRowList();
   updateProgress();
-}
-
-function navigateRow(delta) {
-  const next = session.currentIndex + delta;
-  if (next >= 0 && next < session.requests.length) {
-    session.currentIndex = next;
-    saveSession(session);
-    showCurrentRow();
-    currentStep = 1;
-    updateStepTabs();
-  }
 }
 
 async function refreshPageStatus() {
