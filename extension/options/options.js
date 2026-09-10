@@ -13,6 +13,7 @@ import {
   importMappingData,
   getBudgetSourceList,
   migrateBudgetSourceToLabelKeys,
+  MAP_TYPE_LABELS,
 } from '../shared/mappings.js';
 import {
   getBudgetSourceRemaining,
@@ -20,17 +21,6 @@ import {
   getCityCredentials,
   saveCityCredentials,
 } from '../shared/storage.js';
-
-const TYPE_LABELS = {
-  [MAP_TYPES.city]: 'עיר',
-  [MAP_TYPES.budgetType]: 'סוג תקציב',
-  [MAP_TYPES.item]: 'פריט',
-  [MAP_TYPES.budgetSource]: 'מקור תקציב',
-  [MAP_TYPES.birthCountry]: 'ארץ לידה',
-  [MAP_TYPES.familyClassification]: 'סיווג משפחה',
-  [MAP_TYPES.maritalStatus]: 'מצב משפחתי',
-  [MAP_TYPES.sector]: 'מגזר',
-};
 
 /** Escapes text used inside an HTML attribute built via a template literal - values
  * like "של"מ" or "אש"ל חב"ד ירושלים" contain a literal `"` (Hebrew גרשיים) that would
@@ -290,7 +280,7 @@ async function renderCategories() {
       .join('');
 
     block.innerHTML = `
-      <h3>${escapeHtml(TYPE_LABELS[type] || type)}</h3>
+      <h3>${escapeHtml(MAP_TYPE_LABELS[type] || type)}</h3>
       <div class="category-chips">${chips || '<span class="hint">אין קטגוריות עדיין</span>'}</div>
       <div class="category-add">
         <input type="text" class="category-input" placeholder="הוסף קטגוריה חדשה" />
@@ -335,7 +325,7 @@ async function renderMappings() {
     const tr = document.createElement('tr');
     const captureBtn = row.type === 'item' ? '<button class="btn btn-sm capture-map">לכוד סלקטור</button> ' : '';
     tr.innerHTML = `
-      <td>${escapeHtml(row.type)}</td>
+      <td>${escapeHtml(MAP_TYPE_LABELS[row.type] || row.type)}</td>
       <td>${escapeHtml(row.excelValue || row.key)}</td>
       <td><input type="text" class="map-site-value" data-type="${escapeHtml(row.type)}" data-key="${escapeHtml(row.key)}" value="${escapeHtml(row.siteValue || '')}" /></td>
       <td>${escapeHtml(row.labelIndex || row.selector || '')}</td>
