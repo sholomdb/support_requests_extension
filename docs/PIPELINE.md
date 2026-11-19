@@ -52,7 +52,7 @@ any of this — it's the single place fix/validate logic lives.
 | holocaustSurvivor | ניצול שואה | explicit כן/לא (yes/no) wins; empty/unrecognized → `כן` for the ניצולי שואה budget, else `לא` | – | 1 |
 | birthDate | תאריך לידה | normalize to DD/MM/YYYY; empty → `01/01/2000` | must be a real date | 1 |
 | street / building | רחוב / בנין | trim/normalize; both optional (empty → left as-is on the site) | – | 1 |
-| citySearch | שם הרשות | empty → the file's most common city (excel-parser); **mapped** (city), falls back to `getCitySiteSearch` | required (resolved) | 1 |
+| citySearch | שם הרשות | empty → the logged-in account's city (`accountCityFromSources`: from the home-page budget sources read via "קרא יתרות", matched to the Settings source lists or to a city name in the source name); unknown → row invalid, never prompted; **mapped** (city), falls back to `getCitySiteSearch` | required (resolved) | 1 |
 | settlement | ישוב | only when city is מטה בנימין | required if מטה בנימין | 1 |
 | birthCountry | ארץ לידה | empty → `ישראל`; **mapped**, falls back to `inferBirthCountry` | required (resolved) | 1 |
 | familyClassification | נפשות (effective) + מצב משפחתי | **mapped**, falls back to `inferFamilyClassification` | required (resolved) | 1 |

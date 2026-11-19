@@ -5,7 +5,7 @@
  * behavior needs to change. See docs/PIPELINE.md for the full field table and the
  * reasoning behind the `rowKey`/`requestId` split.
  */
-import { normalizeText, normalizeIdNumber, normalizeBirthDate, isValidBirthDate } from './utils.js';
+import { normalizeText, normalizeCity, normalizeIdNumber, normalizeBirthDate, isValidBirthDate } from './utils.js';
 import { getCitySiteSearch, isMatehBinyamin, CONSTANTS, SHALAM_LABEL_INDEX, EMPTY_DEFAULTS as D } from './config.js';
 import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice, getAllMappings } from './mappings.js';
 import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.js';
@@ -162,10 +162,17 @@ const FIELD_PIPELINE = [
     key: 'citySearch',
     step: 1,
     mapType: MAP_TYPES.city,
+    // An empty cell is filled with the account's city before the pipeline runs (fillEmptyCity).
+    // If that city couldn't be determined, the row is flagged - never prompted/saved as a
+    // mapping for "", which would silently apply one city to every future empty cell.
+    skipIfEmpty: true,
     source: (raw) => raw.city,
     context: (raw) => ({ city: raw.city }),
     fallback: (raw, settings) => getCitySiteSearch(settings?.cities || {}, raw.city),
-    validate: required('עיר לא נפתרה'),
+    validate: (v, raw) =>
+      v ? null
+      : normalizeText(raw.city) ? 'עיר לא נפתרה'
+      : 'עיר חסרה באקסל ועיר החשבון לא זוהתה – קרא יתרות מדף הבית (או מלא את העיר באקסל)',
   },
   {
     key: 'settlement',
@@ -287,6 +294,7 @@ export async function collectMappingQueue(rawRows, fileId, settings) {
       if (field.dependsOn && field.dependsOn.some((dep) => rowFields[dep] === undefined)) continue;
 
       const excelValue = field.source(raw, rowFields);
+      if (field.skipIfEmpty && !normalizeText(excelValue)) continue;
       const context = field.context ? field.context(raw, rowFields) : {};
       const key = mappingKey(field.mapType, excelValue, context);
       const cacheKey = `${field.mapType}::${key}`;
@@ -375,6 +383,10 @@ export function buildRow(rawRow, resolvedMap, fileId) {
       if (entry) {
         value = entry.siteValue;
         outputSource = entry;
+      } else if (field.skipIfEmpty && !normalizeText(excelValue)) {
+        // Empty and not filled from the account: a validation error, not a mapping prompt.
+        value = '';
+        outputSource = { siteValue: '', labelIndex: undefined, selector: undefined };
       } else {
         // configOnly fields (budgetSource) aren't prompted - a miss is a hard config error
         // (INVALID via validate), not a NEEDS_MAPPING the operator resolves in a prompt.
@@ -416,9 +428,9 @@ export function buildRow(rawRow, resolvedMap, fileId) {
 
   fields.defaulted = defaultedFieldsOf(rawRow, fields);
   if (holocaust.defaulted) fields.defaulted.holocaustSurvivor = true;
-  // City taken from the rest of the file (excel-parser fills an empty city cell) - not a
-  // site-prefill field, only reported in the row note.
-  if (rawRow.cityFromFile) fields.defaulted.city = true;
+  // City taken from the logged-in account (fillEmptyCity) - not a site-prefill field, only
+  // reported in the row note.
+  if (rawRow.cityFromAccount) fields.defaulted.city = true;
 
   // של"מ budgets need the fixed "בחירת אוכלוסיה" dropdown on WhoHowM; others leave it empty.
   fields.shalamProgram =
@@ -604,6 +616,44 @@ export function mergeRequestsOnReupload(existingRequests, newRequests) {
     const prev = existingById.get(req.requestId);
     return prev ? { ...req, steps: prev.steps } : req;
   });
+}
+
+/**
+ * The city of the logged-in account, i.e. whose budget we're spending. Derived from the
+ * home-page budget-sources snapshot (only the logged-in account's sources appear there):
+ *  1. a source name that appears in a Settings budget-source list -> that list's city;
+ *  2. otherwise a known city name (Settings city key or its site search text) inside a
+ *     source name (e.g. "... תכנית סיוע חומרי בני ברק 2026").
+ * Returns '' unless exactly one city is found (no snapshot, or ambiguous).
+ *
+ * @param {Object} snapshot      { [sourceName]: remaining } (storage getBudgetSourceRemaining)
+ * @param {Object} bsMappings    valueMappings.budgetSource (Settings source lists)
+ * @param {Object} cities        settings.cities
+ */
+export function accountCityFromSources(snapshot = {}, bsMappings = {}, cities = {}) {
+  const names = new Set(Object.keys(snapshot || {}).map(normalizeText).filter(Boolean));
+  if (!names.size) return '';
+  const found = new Set();
+  for (const entry of Object.values(bsMappings || {})) {
+    const list = entry?.siteValues ?? (entry?.siteValue ? [entry.siteValue] : []);
+    const city = entry?.context?.city;
+    if (city && list.some((v) => names.has(normalizeText(v)))) found.add(normalizeCity(city));
+  }
+  if (!found.size) {
+    for (const [key, cfg] of Object.entries(cities || {})) {
+      const variants = [key, cfg?.siteSearch].map(normalizeText).filter(Boolean);
+      for (const n of names) {
+        if (variants.some((v) => n.includes(v))) found.add(normalizeCity(key));
+      }
+    }
+  }
+  return found.size === 1 ? [...found][0] : '';
+}
+
+/** Rows with an empty city cell get `city` (the account's city); returns new row objects. */
+export function fillEmptyCity(rows, city) {
+  if (!city) return rows;
+  return rows.map((r) => (normalizeText(r.city) ? r : { ...r, city, cityFromAccount: true }));
 }
 
 export { FIELD_PIPELINE };

@@ -15,6 +15,8 @@ const {
   collectMappingQueue,
   mergeRowsOnReupload,
   mergeRequestsOnReupload,
+  accountCityFromSources,
+  fillEmptyCity,
 } = await import('../extension/shared/pipeline.js');
 const { MAP_TYPES, mappingKey, saveMapping } = await import('../extension/shared/mappings.js');
 const { catalogMaxPrice } = await import('../extension/shared/catalog-data.js');
@@ -706,5 +708,45 @@ describe('empty-cell defaults (end to end through collectMappingQueue)', () => {
   test('a non-empty but invalid birth date still blocks the row', async () => {
     const { row } = await build({ birthDate: '31/02/1990' });
     assert.equal(row.status, ROW_STATUS.INVALID);
+  });
+});
+
+describe('account city for empty city cells', () => {
+  beforeEach(() => installChromeStub());
+  const cities = {
+    'אלעד': { siteSearch: 'אלעד' },
+    'בני ברק': { siteSearch: 'בני ברק' },
+    'חברון': { siteSearch: 'ועד יהודי חברון' },
+  };
+
+  test('found from the Settings budget-source list that owns a home-page source', () => {
+    const bs = { 'x::אלעד': { siteValues: ['מקור א'], context: { budgetLabel: 'x', city: 'אלעד' } } };
+    assert.equal(accountCityFromSources({ 'מקור א': 100, 'אחר': 5 }, bs, cities), 'אלעד');
+  });
+
+  test('falls back to a city name inside a source name', () => {
+    assert.equal(accountCityFromSources({ 'סיוע חירום למשפחות תכנית סיוע חומרי בני ברק 2026': 1 }, {}, cities), 'בני ברק');
+    assert.equal(accountCityFromSources({ 'ועד יהודי חברון - קשישים': 1 }, {}, cities), 'חברון');
+  });
+
+  test('no snapshot or an ambiguous one -> unknown', () => {
+    assert.equal(accountCityFromSources({}, {}, cities), '');
+    assert.equal(accountCityFromSources({ 'אלעד 1': 1, 'בני ברק 2': 1 }, {}, cities), '');
+  });
+
+  test('fillEmptyCity only fills empty cells and flags them', () => {
+    const out = fillEmptyCity([makeRawRow({ city: '' }), makeRawRow({ city: 'בני ברק' })], 'אלעד');
+    assert.equal(out[0].city, 'אלעד');
+    assert.equal(out[0].cityFromAccount, true);
+    assert.equal(out[1].city, 'בני ברק');
+    assert.equal(out[1].cityFromAccount, undefined);
+  });
+
+  test('an empty city that could not be filled is invalid, never a mapping prompt', async () => {
+    const raw = makeRawRow({ city: '' });
+    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
+    assert.ok(!queue.some((q) => q.type === MAP_TYPES.city));
+    const row = buildRow(raw, resolved, FILE_ID);
+    assert.ok(row.errors.some((e) => e.field === 'citySearch' && e.reason.includes('עיר חסרה')));
   });
 });

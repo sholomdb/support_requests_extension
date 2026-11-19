@@ -34,17 +34,6 @@ const BIRTHDATE_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'bir
 const LAST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'lastName');
 const FIRST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'firstName');
 
-function mostCommon(values) {
-  const counts = new Map();
-  let best = '';
-  for (const v of values) {
-    const n = (counts.get(v) || 0) + 1;
-    counts.set(v, n);
-    if (n > (counts.get(best) || 0)) best = v;
-  }
-  return best;
-}
-
 function cellRef(col, row) {
   return `${col}${row}`;
 }
@@ -126,18 +115,9 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
     throw new Error(`לא נמצאו שורות נתונים (שורה ${DATA_START_ROW}+ עם ת.ז.)`);
   }
 
-  // An empty city cell takes the file's city (the most common non-empty city in the file).
-  const fileCity = mostCommon(rows.map((row) => row.city).filter(Boolean));
-  if (fileCity) {
-    for (const row of rows) {
-      if (!row.city) {
-        row.city = fileCity;
-        row.cityFromFile = true;
-      }
-    }
-  }
-
-  const cities = [...new Set(rows.map((row) => row.city))];
+  // An empty city cell is filled later with the logged-in account's city
+  // (pipeline fillEmptyCity / accountCityFromSources), not guessed from the file.
+  const cities = [...new Set(rows.map((row) => row.city).filter(Boolean))];
   const city = cities.length === 1 ? cities[0] : cities.join(', ');
 
   if (cities.length > 1) {

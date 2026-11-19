@@ -99,7 +99,7 @@ describe('parseExcelBuffer: empty city + dropped no-ID rows', () => {
     return XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   }
 
-  test('an empty city cell takes the file city, and named rows without ת.ז. are reported', () => {
+  test('an empty city cell stays empty (filled later from the account), named rows without ת.ז. are reported', () => {
     const buf = makeWorkbook([
       ['משפחות', 'אלעד', '123456782', '', 'כהן', 'דוד'],
       ['משפחות', '', '234567891', '', 'לוי', 'משה'],
@@ -108,9 +108,8 @@ describe('parseExcelBuffer: empty city + dropped no-ID rows', () => {
     ]);
     const parsed = parseExcelBuffer(buf, 't.xlsx');
     assert.equal(parsed.rows.length, 2);
-    assert.equal(parsed.rows[1].city, 'אלעד');
-    assert.equal(parsed.rows[1].cityFromFile, true);
-    assert.equal(parsed.rows[0].cityFromFile, undefined);
+    assert.equal(parsed.rows[1].city, '');
+    assert.deepEqual(parsed.cities, ['אלעד']);
     assert.deepEqual(parsed.droppedNoIdRows, [9]);
   });
 });

@@ -20,8 +20,10 @@ import {
   ROW_STATUS,
   STEP_STATUS,
   DEFAULTED_LABELS,
+  accountCityFromSources,
+  fillEmptyCity,
 } from '../shared/pipeline.js';
-import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
+import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys, getAllMappings } from '../shared/mappings.js';
 import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
@@ -215,9 +217,30 @@ function showNextQueueItem() {
   showMappingPrompt(pendingMapping);
 }
 
+/** The logged-in account's city (whose budget we use), from the stored home-page budget
+ * sources - see pipeline accountCityFromSources. '' when the balances weren't read yet. */
+async function getAccountCity() {
+  const snapshot = await getBudgetSourceRemaining();
+  const bs = (await getAllMappings())[MAP_TYPES.budgetSource] || {};
+  return accountCityFromSources(snapshot, bs, settings.cities);
+}
+
+/** Fills empty city cells with the account's city; logs when some stay empty. */
+async function withAccountCity(rows, { quiet = false } = {}) {
+  if (!rows.some((r) => !normalizeText(r.city))) return rows;
+  const city = await getAccountCity();
+  const filled = fillEmptyCity(rows, city);
+  const stillEmpty = filled.filter((r) => !normalizeText(r.city)).length;
+  if (stillEmpty && !quiet) {
+    log(`⚠ ${stillEmpty} שורות ללא עיר ועיר החשבון לא זוהתה – קרא יתרות מדף הבית (או מלא עיר באקסל)`);
+  }
+  return filled;
+}
+
 /** Runs the fix+validate pipeline for every row using already-resolved mappings,
  * and merges with the previous session's progress when it's the same file. */
 async function finalizeUpload(parsed, fileId, previousSession) {
+  parsed = { ...parsed, rows: await withAccountCity(parsed.rows, { quiet: true }) };
   const { resolved } = await collectMappingQueue(parsed.rows, fileId, settings);
   const builtRows = parsed.rows.map((r) => buildRow(r, resolved, fileId));
 
@@ -309,6 +332,7 @@ async function handleFileUpload(e) {
       session = null;
     }
 
+    parsed.rows = await withAccountCity(parsed.rows);
     const { queue } = await collectMappingQueue(parsed.rows, fileId, settings);
     if (queue.length) await resolveMappingQueueInteractive(queue);
 
