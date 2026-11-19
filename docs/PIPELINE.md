@@ -58,7 +58,7 @@ any of this — it's the single place fix/validate logic lives.
 | familyClassification | נפשות (effective) + מצב משפחתי | **mapped**, falls back to `inferFamilyClassification` | required (resolved) | 1 |
 | mobilePhone / homePhone | טלפון נייד | `routePhone`: +972/00972/972 prefix → local 0; pad to 10 digits — if `05` → mobile (10 digits); else → home padded to **9** digits, and if that doesn't start with a valid area code (02/03/04/08/09) it becomes the placeholder `020000000` | one of the two has a value | 1 |
 | budgetType / budgetLabelIndex | סוג תקציב | **mapped** to CATALOG label index | required (resolved) | 2 |
-| item / itemSelector / itemMaxPrice | פריט | empty → `מזון` (then mapped like any Excel text); **mapped** to a catalog item name; max price from catalog-data.js | required (resolved) + must exist in the row's budget | 2 |
+| item / itemSelector / itemMaxPrice | פריט | empty → `מזון (סופר,מכולת,ספק מזון)` (exact catalog name, in every budget); **mapped** to a catalog item name; max price from catalog-data.js | required (resolved) + must exist in the row's budget | 2 |
 | budgetSource | סוג תקציב + שם הרשות | **mapped**, keyed by budget type + city | required (resolved) | 3 |
 | amount | סכום סיוע בש"ח | to string | must be > 0 | 3 |
 | reason | נימוקים לאישור | trim/normalize; empty → `עזרה` | – | 3 |

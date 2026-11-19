@@ -36,7 +36,8 @@ export const EMPTY_DEFAULTS = {
   birthDate: '01/01/2000',
   maritalStatus: 'נשוי/אה',
   householdSize: '2',
-  item: 'מזון',
+  // Exact catalog name (present in all six budget catalogs) - resolves with no prompt.
+  item: 'מזון (סופר,מכולת,ספק מזון)',
   reason: 'עזרה',
 };
 

@@ -649,11 +649,9 @@ describe('empty-cell defaults (end to end through collectMappingQueue)', () => {
   beforeEach(() => installChromeStub());
 
   async function build(overrides) {
-    // Every budget/city combo needs a configured source list; the default item "מזון" is not
-    // a catalog name, so (like any Excel wording) it's mapped once by the operator.
+    // Every budget/city combo needs a configured source list.
     await saveMapping(MAP_TYPES.budgetSource, '', '', { budgetLabel: 'סיוע חירום למשפחות', city: 'אלעד' }, { siteValues: ['מקור'] });
     await saveMapping(MAP_TYPES.budgetSource, '', '', { budgetLabel: 'ניצולי שואה', city: 'אלעד' }, { siteValues: ['מקור'] });
-    await saveMapping(MAP_TYPES.item, 'מזון', 'מזון (סופר,מכולת,ספק מזון)');
     const raw = makeRawRow({ item: 'מזון (סופר,מכולת,ספק מזון)', ...overrides });
     const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
     return { queue, row: buildRow(raw, resolved, FILE_ID) };
