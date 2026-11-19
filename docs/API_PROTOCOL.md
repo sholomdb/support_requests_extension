@@ -21,8 +21,9 @@ Every `webprojects` call carries three custom headers, issued after the SMS logi
 - `tc4gftmj5twjryy3bxcbqs3n` — ~704-hex session token
 - plus `fturl: https://ifcjil.formtitan.com/ftproject/ifcjaid/IFCJAIDHOME`
 
-**Strategy:** don't reimplement login. Harvest these headers from live page traffic (same
-recorder mechanism) and replay them on our own `fetch` calls. They expire, so capture-fresh.
+**Strategy:** these headers are obtained by the extension's own SMS login ("🔑 התחבר",
+`ft-login.js`) and replayed on our own `fetch` calls. They expire, so log in again on an auth
+error. (They were originally harvested by an in-extension traffic recorder, since removed.)
 
 ## The flow (one request)
 

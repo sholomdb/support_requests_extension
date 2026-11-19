@@ -10,8 +10,8 @@
  *
  * These builders return {url,method,headers,body}; the caller executes them via the content
  * script's API_FETCH (same-origin on ifcjil.formtitan.com - cookies + correct Origin). The
- * verify response is turned into the same `ftAuth` shape the recorder harvests, so downstream
- * API calls don't care whether the session came from harvesting or from this login.
+ * verify response is turned into the `ftAuth` shape (ft-auth.js) that every downstream API
+ * call reads.
  *
  * Credentials are supplied by the caller (from Settings) and never stored here.
  */

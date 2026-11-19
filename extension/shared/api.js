@@ -2,7 +2,7 @@
  * FormTitan request client (Phase 0 - auth spike).
  *
  * Builds direct API calls against webprojects/{get,push}/sfmapping using the session auth
- * headers harvested by the recorder (ft-auth.js). Requests are *built* here but EXECUTED by
+ * headers saved by the "🔑 התחבר" login (ft-auth.js). Requests are *built* here but EXECUTED by
  * the content script (API_FETCH message) so the fetch is same-origin on ifcjil.formtitan.com -
  * cookies attach automatically, custom headers are allowed, and the Origin/Referer match the
  * app (a background-worker fetch would carry a chrome-extension:// origin the server may reject).
@@ -44,7 +44,7 @@ function uuid() {
 }
 
 /** Builds the ID-lookup request ({url, method, headers, body}) to POST to get/sfmapping.
- * Throws if no auth has been harvested yet. `auth` can be injected (tests); otherwise read
+ * Throws if there is no saved session yet. `auth` can be injected (tests); otherwise read
  * from storage. */
 export async function buildIdLookupRequest(idNumber, auth) {
   auth = auth || (await getFtAuth());
