@@ -1,3 +1,10 @@
+/* Latin-only values (a URL) stay LTR inside the RTL page, so the scheme and the
+   trailing path don't get re-ordered around the cursor while typing. */
+#siteUrl {
+  direction: ltr;
+  text-align: left;
+}
+
 body {
   font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
   max-width: 720px;

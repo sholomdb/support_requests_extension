@@ -23,11 +23,9 @@ import {
   accountCityFromSources,
   fillEmptyCity,
 } from '../shared/pipeline.js';
-import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys, getAllMappings } from '../shared/mappings.js';
-import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
+import { saveMapping, MAP_TYPES, MAP_TYPE_LABELS, migrateBudgetSourceToLabelKeys, getAllMappings } from '../shared/mappings.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
-import { runRequest, AUTH_ERROR } from '../shared/ft-flow.js';
 
 let settings = null;
 let session = null;
@@ -144,6 +142,11 @@ async function init() {
   await migrateBudgetSourceToLabelKeys();
   session = await getSession();
 
+  // The network-recorder UI is gone, so make sure a previously-armed recording can't stay
+  // on with no way to stop it (background.js only records while `apiRecording` is set), and
+  // drop any capture it left behind - nothing can export or clear it any more.
+  await chrome.storage.local.remove(['apiRecording', 'apiTrafficLog']);
+
   // Read straight from the manifest so it never drifts out of sync with the real version.
   $('appVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -154,17 +157,11 @@ async function init() {
 
   $('fileInput').addEventListener('change', handleFileUpload);
   $('loadAnotherFileBtn').addEventListener('click', () => $('fileInput').click());
-  $('newRecordBtn').addEventListener('click', startNewRecord);
   $('loginBtn').addEventListener('click', loginToSite);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
-  $('apiTestBtn').addEventListener('click', testApiIdLookup);
-  $('apiDryRunBtn').addEventListener('click', apiDryRun);
-  $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
   $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
   $('markFailureBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FAILED));
-  $('prevRowBtn').addEventListener('click', () => navigateRow(-1));
-  $('nextRowBtn').addEventListener('click', () => navigateRow(1));
   $('saveMappingBtn').addEventListener('click', saveMappingAndContinue);
   $('cancelMappingBtn').addEventListener('click', skipMappingAndContinue);
   $('mappingSiteValue').addEventListener('change', onMappingSiteValueChange);
@@ -352,7 +349,7 @@ async function handleFileUpload(e) {
     }
     await persistLog();
   } catch (err) {
-    alert(`Error loading file: ${err.message}`);
+    alert(`שגיאה בטעינת הקובץ: ${err.message}`);
   } finally {
     e.target.value = '';
   }
@@ -417,7 +414,7 @@ function showFileUI(sess) {
     issues.length ? `⚠ ${issues.join(', ')}` : '✓ כל השורות מוכנות למילוי';
 
   const city = parsed.city;
-  $('loginId').textContent = findCityLoginId(settings.cities, city) || '(not set – open Settings)';
+  $('loginId').textContent = findCityLoginId(settings.cities, city) || '(לא הוגדר – פתח את ההגדרות)';
   renderRowList();
   updateProgress();
 }
@@ -438,16 +435,16 @@ function showCurrentRow() {
     : '';
 
   $('rowDetails').innerHTML = `
-    <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ID ${f.idNumber || ''}<br>
+    <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ת.ז. ${f.idNumber || ''}<br>
     📞 ${f.mobilePhone || f.homePhone || ''} | 🎂 ${f.birthDate || ''} | ${f.maritalStatus || ''}<br>
     📍 ${f.street || ''} ${f.building || ''}, ${f.settlement || f.citySearch || ''}<br>
-    <strong>Type:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
+    <strong>סוג בקשה:</strong> ${f.budgetSiteValue || ''} → ${f.itemSiteValue || ''}<br>
     <strong>מקור תקציב:</strong> ${
       request.outOfBudget ?
         `⚠ חורג מתקציב${request.sourceLabel ? ` (ימולא ל: ${request.sourceLabel})` : ''}`
       : request.sourceLabel || '—'
     }<br>
-    <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
+    <strong>סכום:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
     ${defaultsHtml}
   `;
@@ -504,7 +501,7 @@ function updateProgress() {
   const total = session.requests.length;
   const done = session.requests.filter(isRequestDone).length;
   $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
-  $('progressText').textContent = `${done} / ${total} done | row ${session.currentIndex + 1}`;
+  $('progressText').textContent = `הושלמו ${done} מתוך ${total} | שורה ${session.currentIndex + 1}`;
 }
 
 function updateStepTabs() {
@@ -621,7 +618,7 @@ function scoreFillResponse(response, phase) {
 async function sendToContent(message) {
   const tab = await getFormTitanTab();
   if (!tab?.id) {
-    throw new Error('No FormTitan tab – open ifcjil.formtitan.com and click the page');
+    throw new Error('לא נמצאה לשונית של האתר – פתח את ifcjil.formtitan.com ולחץ על הדף');
   }
 
   await ensureContentScript(tab.id);
@@ -740,7 +737,7 @@ async function sendToContent(message) {
 
     if (bestFrameId != null && bestScore > 0) lastWorkingFrameId = bestFrameId;
     if (best) return { ...best, frameId: bestFrameId };
-    throw new Error('Fill failed – form not found in any frame');
+    throw new Error('המילוי נכשל – הטופס לא נמצא באף פריים');
   }
 
   if (lastWorkingFrameId != null) {
@@ -754,7 +751,7 @@ async function sendToContent(message) {
 
 async function getPageInfoForTab() {
   const tab = await getFormTitanTab();
-  if (!tab?.id) return { ok: false, error: 'no tab' };
+  if (!tab?.id) return { ok: false, error: 'אין לשונית של האתר' };
 
   await ensureContentScript(tab.id);
 
@@ -807,7 +804,7 @@ const ADD_CATEGORY_OPTION = '__add_new_category__';
 
 function showMappingPrompt(item) {
   $('mappingSection').classList.remove('hidden');
-  $('mappingType').textContent = item.type;
+  $('mappingType').textContent = MAP_TYPE_LABELS[item.type] || item.type;
   $('mappingExcelValue').textContent = item.excelValue;
   $('mappingAffectedCount').textContent = String(item.affectedRowKeys?.length ?? 0);
 
@@ -964,7 +961,7 @@ async function saveMappingAndContinue() {
   const siteValue = currentPickerValue();
 
   if (!siteValue) {
-    alert('Enter a site value');
+    alert('הזן ערך לאתר');
     return;
   }
 
@@ -1013,11 +1010,11 @@ async function fillCurrentStep(stepOverride) {
         pageInfo.page
       : pageFromTabUrl(pageInfo.url) || 'unknown';
     if (page !== expectedPage && page !== 'unknown') {
-      log(`Warning: on ${page}, expected ${expectedPage}. Navigate first.`);
+      log(`אזהרה: נמצאים בדף ${page} במקום ${expectedPage} – נווט לדף הנכון תחילה.`);
     } else if (page === 'unknown') {
-      log(`Page not recognized (url: ${pageInfo.url}) – filling step ${step} anyway…`);
+      log(`הדף לא זוהה (${pageInfo.url}) – ממלא את שלב ${step} בכל זאת…`);
     } else {
-      log(`Page: ${page}${pageInfo.frameId != null ? ` (frame ${pageInfo.frameId})` : ''}`);
+      log(`דף: ${page}${pageInfo.frameId != null ? ` (פריים ${pageInfo.frameId})` : ''}`);
     }
 
     if (!isFillable(request)) {
@@ -1026,7 +1023,7 @@ async function fillCurrentStep(stepOverride) {
       return;
     }
 
-    if (step === 1) log('Step 1: fill ID → search → fill remaining fields');
+    if (step === 1) log('שלב 1: מילוי ת.ז., חיפוש, ואז שאר השדות');
 
     const prepared = { ok: true, fields: request.fields, ...request.fields };
     const fillPayload = {
@@ -1041,7 +1038,7 @@ async function fillCurrentStep(stepOverride) {
 
     let fieldsOk = false;
     if (step === 1) {
-      log('Filling ID and clicking search…');
+      log('ממלא ת.ז. ולוחץ על חיפוש…');
       const idResult = await sendToContent({ ...fillPayload, phase: 'id' });
       logFillResult(idResult, step);
 
@@ -1058,7 +1055,7 @@ async function fillCurrentStep(stepOverride) {
           selectors: settings.selectors,
         });
         if (verify?.ok) {
-          log(`ID verified on page (${verify.actual}) – continuing`);
+          log(`ת.ז. אומתה בדף (${verify.actual}) – ממשיך`);
           canContinue = true;
         }
       }
@@ -1069,7 +1066,7 @@ async function fillCurrentStep(stepOverride) {
         return;
       }
 
-      log('Filling remaining details…');
+      log('ממלא את שאר הפרטים…');
       const detailsResult = await sendToContent({ ...fillPayload, phase: 'details' });
       logFillResult(detailsResult, step);
       fieldsOk = allFieldsOk(detailsResult);
@@ -1097,7 +1094,7 @@ async function fillCurrentStep(stepOverride) {
 
     await advanceStep(step, fieldsOk, request);
   } catch (err) {
-    log(`Error: ${err.message}. Ensure FormTitan is the active tab.`);
+    log(`שגיאה: ${err.message}. ודא שלשונית האתר היא הלשונית הפעילה.`);
   } finally {
     await persistLog();
     renderRowList();
@@ -1196,71 +1193,6 @@ async function readBudgetSourceBalances() {
   }
 }
 
-/** Phase 0 spike: prove we can replay the harvested session headers by doing the ID lookup
- * ourselves (get/sfmapping) and showing what comes back. */
-async function testApiIdLookup() {
-  const { ftAuth } = await chrome.storage.local.get('ftAuth');
-  if (!ftAuth?.headers) {
-    log('אין סשן API – התחבר דרך "🔑 התחבר" ונסה שוב');
-    return;
-  }
-  const suggested = session?.requests?.[session.currentIndex]?.fields?.idNumber || '';
-  const id = prompt('ת.ז. לבדיקת API (ID lookup):', suggested);
-  if (!id) return;
-  try {
-    const req = await buildIdLookupRequest(id.trim());
-    const res = await sendToContent({ type: 'API_FETCH', request: req });
-    if (!res?.ok) {
-      log(`API נכשל: ${res?.error || 'status ' + res?.status}`);
-      return;
-    }
-    if (isAuthFailure(res.status, res.text)) {
-      log('נראה שהסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
-      return;
-    }
-    const parsed = parseMappingResponse(res.text);
-    log(`API ${res.status}: status=${parsed.status} | ${Object.keys(parsed.fields || {}).length} שדות, ${Object.keys(parsed.params || {}).length} params`);
-    log(JSON.stringify(parsed.fields).slice(0, 600));
-  } catch (e) {
-    log(`שגיאה: ${e.message}`);
-  }
-  await persistLog();
-}
-
-/** Runs the headless GET/POST chain for the current request as a DRY RUN: discovers the field
- * ids from preview-page, resolves the SF ids via the read chain, and builds (without sending)
- * the pushes. The final submit (e361) is never fired. Proves the request-based flow end to end
- * on the live site and surfaces what's still missing (account id, page guid). */
-async function apiDryRun() {
-  const { ftAuth } = await chrome.storage.local.get('ftAuth');
-  if (!ftAuth?.headers) {
-    log('אין סשן API – התחבר דרך "🔑 התחבר" ונסה שוב');
-    return;
-  }
-  const request = session?.requests?.[session.currentIndex];
-  if (!request?.fields?.idNumber) {
-    log('אין בקשה נוכחית עם ת.ז. – טען קובץ ובחר בקשה');
-    return;
-  }
-  const fetchApi = (req) => sendToContent({ type: 'API_FETCH', request: req });
-  // The account id used to be scraped from recorded traffic; without the recorder the dry run
-  // skips the budget-source/request-record resolution (ft-flow notes it in the log).
-  const accountId = '';
-  const ctx = { accountId, dateISO: new Date().toISOString().slice(0, 10) };
-  log(`🧪 הרצת API יבשה לבקשה ${request.fields.idNumber}${accountId ? '' : ' (ללא accountId – מקור התקציב לא ייפתר)'}…`);
-  try {
-    const trace = await runRequest(request, { fetchApi, auth: ftAuth, ctx });
-    for (const line of trace.log) log(`   ${line}`);
-    const ids = trace.ids;
-    log(`מזהים: contact=${ids.contactId || '-'} | פריט=${ids.itemId || '-'} | מקור=${ids.sourceId || '-'} | יתרה=${ids.remaining ?? '-'} | רשומה=${ids.recordId || '-'}`);
-    log(`state של MUTAV (e238) נבנה עם ${Object.keys(JSON.parse(trace.requests.mutavPush.form.state)).length} שדות (לא נשלח)`);
-  } catch (e) {
-    if (e.code === AUTH_ERROR) log('הסשן פג – לחץ "🔑 התחבר" והתחבר מחדש');
-    else log(`הרצה יבשה נכשלה: ${e.message}`);
-  }
-  await persistLog();
-}
-
 /** Picks which city's credentials to log in with: the current file's city, else the only
  * configured one, else asks the operator to choose. Returns { city, loginId, password } or null. */
 async function pickLoginCredentials() {
@@ -1342,20 +1274,6 @@ async function loginToSite() {
   await persistLog();
 }
 
-async function startNewRecord() {
-  try {
-    const result = await sendToContent({ type: 'START_NEW_RECORD', selectors: settings.selectors });
-    if (result.ok) {
-      log('Clicked new record – wait for MUTAV page');
-      setTimeout(refreshPageStatus, 1500);
-    } else {
-      log('New record button not found – go to home page first');
-    }
-  } catch (err) {
-    log(`Error: ${err.message}`);
-  }
-}
-
 /** Navigates the FormTitan tab to the home page and waits for it to load. */
 async function goHome() {
   const tab = await getFormTitanTab();
@@ -1429,12 +1347,10 @@ async function fillOneRequest() {
  * "stop" toggle while a batch is running. */
 function setAutomationRunning(on, batch = false) {
   automationRunning = on;
-  ['newRecordBtn', 'fillRequestBtn', 'prevRowBtn', 'nextRowBtn', 'markSuccessBtn', 'markFailureBtn'].forEach(
-    (id) => {
-      const b = $(id);
-      if (b) b.disabled = on;
-    }
-  );
+  ['markSuccessBtn', 'markFailureBtn'].forEach((id) => {
+    const b = $(id);
+    if (b) b.disabled = on;
+  });
   document.querySelectorAll('.step-tab').forEach((tab) => {
     tab.disabled = on;
   });
@@ -1446,29 +1362,6 @@ function setAutomationRunning(on, batch = false) {
     } else {
       batchBtn.disabled = on;
     }
-  }
-}
-
-/** Button 1 — "מלא בקשה": fill only the current request, stopping on the first error
- * so the operator can finish that stage manually. */
-async function runFillRequest() {
-  if (automationRunning) return;
-  setAutomationRunning(true);
-  try {
-    const result = await fillOneRequest();
-    if (!result.ok && result.stoppedAt) {
-      currentStep = result.stoppedAt; // leave the operator on the failing stage
-      updateStepTabs();
-    }
-  } catch (err) {
-    log(`שגיאה: ${err.message}`);
-  } finally {
-    setAutomationRunning(false);
-    await persistLog();
-    showCurrentRow();
-    renderRowList();
-    updateProgress();
-    refreshPageStatus();
   }
 }
 
@@ -1560,36 +1453,26 @@ async function overrideRequestStatus(status) {
   updateProgress();
 }
 
-function navigateRow(delta) {
-  const next = session.currentIndex + delta;
-  if (next >= 0 && next < session.requests.length) {
-    session.currentIndex = next;
-    saveSession(session);
-    showCurrentRow();
-    currentStep = 1;
-    updateStepTabs();
-  }
-}
-
 async function refreshPageStatus() {
   const el = $('pageStatus');
   if (!el) return;
   try {
     const info = await getPageInfoForTab();
     const labels = {
-      home: 'Home – click New Record',
-      mutav: 'MUTAV – fill step 1',
-      catalog: 'CATALOG – fill step 2',
-      whohowm: 'WhoHowM – fill step 3',
-      unknown: 'FormTitan – page unknown',
+      // Points at the SITE's own button - the panel no longer has one of its own.
+      home: 'דף הבית – לחץ "רשומה חדשה" באתר',
+      mutav: 'MUTAV – מילוי שלב 1',
+      catalog: 'CATALOG – מילוי שלב 2',
+      whohowm: 'WhoHowM – מילוי שלב 3',
+      unknown: 'FormTitan – הדף לא זוהה',
     };
     if (info?.ok && info.page) {
-      el.textContent = `✓ ${labels[info.page] || info.url}${info.frameId != null ? ` [frame ${info.frameId}]` : ''}`;
+      el.textContent = `✓ ${labels[info.page] || info.url}${info.frameId != null ? ` [פריים ${info.frameId}]` : ''}`;
     } else {
-      el.textContent = info?.url || 'Connected – reload page if fill fails';
+      el.textContent = info?.url || 'מחובר – רענן את הדף אם המילוי נכשל';
     }
   } catch {
-    el.textContent = 'Open FormTitan (ifcjil.formtitan.com) in a browser tab';
+    el.textContent = 'פתח את אתר FormTitan (ifcjil.formtitan.com) בלשונית';
   }
 }
 
@@ -1629,19 +1512,19 @@ function exportSessionFile() {
 
 function logFillResult(result, step) {
   if (!result?.ok && result?.error) {
-    log(`Fill error: ${result.error}`);
+    log(`שגיאת מילוי: ${result.error}`);
   }
   if (result?.insufficientBalance) {
     log(`⚠ היתרה לניצול במקור התקציבי (${result.balance} ₪) קטנה מסכום הבקשה – הבקשה לא נשלחה`);
   }
   if (result?.results?.length) {
-    log(`Step ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} fields`);
+    log(`שלב ${step} (${result.stepName || STEP_PAGES[step]}): ${result.filled}/${result.total} שדות`);
     result.results.forEach((r) => {
       if (r.skipped) log(`  ⊘ ${r.label || r.field} – locked: "${r.value}"`);
       else log(`  ${r.ok ? '✓' : '✗'} ${r.label || r.field} = ${r.value ?? ''}${r.reason ? ` (${r.reason})` : ''}`);
     });
   } else if (result?.ok) {
-    log(`Step ${step} completed but no field details returned`);
+    log(`שלב ${step} הסתיים אך לא הוחזרו פרטי שדות`);
   }
 }
 
