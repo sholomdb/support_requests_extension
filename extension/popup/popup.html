@@ -47,8 +47,7 @@
     <h2>ניווט באתר</h2>
     <p class="hint" id="pageStatus">טוען מצב דף...</p>
     <div class="actions">
-      <button class="btn primary" id="newRecordBtn">+ רשומה חדשה (#e25)</button>
-      <button class="btn" id="loginBtn" title="התחברות לאתר עם ת.ז./סיסמה מההגדרות וקוד SMS">🔑 התחבר</button>
+      <button class="btn primary" id="loginBtn" title="התחברות לאתר עם ת.ז./סיסמה מההגדרות וקוד SMS">🔑 התחבר</button>
       <button class="btn" id="readBalancesBtn" title="קרא מהטבלה בדף הבית">💰 קרא יתרות מקורות</button>
     </div>
   </section>
@@ -87,7 +86,6 @@
     <div class="row-details" id="rowDetails"></div>
 
     <div class="actions">
-      <button class="btn primary" id="fillRequestBtn" title="דף הבית → רשומה חדשה → מילוי כל השלבים, עצירה בשגיאה">▶ מלא בקשה</button>
       <button class="btn primary" id="fillFromCurrentBtn" title="מילוי כל הבקשות מהנוכחית והלאה; דילוג על שגיאות">⏩ מלא בקשות מהנוכחית</button>
     </div>
     <p class="hint">מילוי שלב בודד (לחיצה ממלאת את השלב באתר):</p>
@@ -99,10 +97,6 @@
     <div class="actions">
       <button class="btn success" id="markSuccessBtn" title="סמן ידנית שהבקשה הושלמה (מעקף)">✓ סמן כהצלחה</button>
       <button class="btn danger" id="markFailureBtn" title="סמן ידנית שהבקשה נכשלה (מעקף)">✗ סמן ככישלון</button>
-    </div>
-    <div class="actions">
-      <button class="btn" id="prevRowBtn">← שורה קודמת</button>
-      <button class="btn" id="nextRowBtn">שורה הבאה →</button>
     </div>
     <pre class="log" id="fillLog"></pre>
   </section>
@@ -119,15 +113,6 @@
       </select>
     </div>
     <ul id="rowList" class="row-list"></ul>
-  </section>
-
-  <section class="card" id="apiToolsSection">
-    <h2>בדיקות API (פיתוח)</h2>
-    <p class="hint">דורש התחברות דרך "🔑 התחבר".</p>
-    <div class="actions">
-      <button class="btn" id="apiTestBtn" title="בודק שאפשר לבצע קריאת API ישירה עם כותרות האימות שנלכדו">🔌 בדיקת API (ID lookup)</button>
-      <button class="btn" id="apiDryRunBtn" title="מריץ את שרשרת ה-GET/POST עבור הבקשה הנוכחית (גילוי מזהי שדות + פתרון מזהים), בלי שליחה סופית">🧪 הרצת API יבשה (בקשה נוכחית)</button>
-    </div>
   </section>
 
   <script src="../lib/xlsx.full.min.js"></script>

@@ -181,6 +181,10 @@ header a {
   border-color: #c0392b;
 }
 
+/* The log mixes Hebrew messages with Latin page names, selectors and URLs. `plaintext`
+   gives every LINE its own direction from its first strong character (and `start`
+   alignment follows it), so a Hebrew line reads right-to-left and a Latin one
+   left-to-right, instead of one direction mangling the other. */
 .log {
   background: #1a1a2e;
   color: #a8e6cf;
@@ -191,6 +195,16 @@ header a {
   overflow: auto;
   margin-top: 8px;
   white-space: pre-wrap;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/* Same treatment for the current-row card: names and addresses are Hebrew, but the
+   ת.ז./phone/amount runs are digits that must not be re-ordered around them. */
+.row-details,
+.row-list li {
+  unicode-bidi: plaintext;
+  text-align: start;
 }
 
 label {
@@ -206,6 +220,13 @@ label input {
   padding: 8px;
   border: 1px solid #ddd;
   border-radius: 6px;
+}
+
+/* ...but an author `display` beats the UA's `[hidden] { display: none }`, which was
+   showing the file input inside the "טען קובץ אקסל" label as a raw Choose-File control
+   (and overflowing the panel with it). Any element marked `hidden` stays hidden. */
+[hidden] {
+  display: none !important;
 }
 
 .balance-result {
