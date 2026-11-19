@@ -14,43 +14,6 @@ export const MAP_TYPES = {
   sector: 'sector',
 };
 
-/** Default Excel → site mappings (operator can override) */
-export const DEFAULT_SEEDS = {
-  budgetType: {
-    'משפחות': { siteValue: BUDGET_LABELS[1], labelIndex: 1 },
-    'אזרח ותיק': { siteValue: BUDGET_LABELS[2], labelIndex: 2 },
-    'ניצולי שואה': { siteValue: BUDGET_LABELS[3], labelIndex: 3 },
-    'אלימות': { siteValue: BUDGET_LABELS[6], labelIndex: 6 },
-    'אלימות ': { siteValue: BUDGET_LABELS[6], labelIndex: 6 },
-    'נפגעי אלימות': { siteValue: BUDGET_LABELS[6], labelIndex: 6 },
-    'מלחמה': { siteValue: BUDGET_LABELS[5], labelIndex: 5 },
-    'צעירים': { siteValue: BUDGET_LABELS[5], labelIndex: 5 },
-    'צעירים (תיקון)': { siteValue: BUDGET_LABELS[5], labelIndex: 5 },
-  },
-  city: {
-    'אלעד': { siteValue: 'אלעד' },
-    'ביתר עילית': { siteValue: 'ביתר עילית' },
-    'ביתר': { siteValue: 'ביתר עילית' },
-    'בני ברק': { siteValue: 'בני ברק' },
-    'חברון': { siteValue: 'ועד יהודי חברון' },
-    'בית אל': { siteValue: 'בית אל' },
-    'מודיעין': { siteValue: 'מודיעין עילית' },
-    'מודיעין עילית': { siteValue: 'מודיעין עילית' },
-    'מטה בנימין': { siteValue: 'מטה בנימין' },
-  },
-  birthCountry: {},
-  budgetSource: {},
-  // Seeded from the catalog files (catalog-data.js): an Excel item value that exactly
-  // matches a known catalog item name resolves to itself automatically, no operator
-  // prompt. A saved operator mapping still overrides this if the Excel wording differs.
-  item: Object.fromEntries(catalogItemNames().map((name) => [name, { siteValue: name }])),
-  familyClassification: {},
-  // Starts empty like maritalStatus: Excel gender/spelling variants (יהודיה, מוסלמית,
-  // בדווי…) canonicalize via inferSector, and anything else is an operator decision
-  // (e.g. "ערבי", which could be מוסלמי or נוצרי) saved as a mapping on first prompt.
-  sector: {},
-};
-
 export function mappingKey(type, excelValue, context = {}) {
   const val = normalizeText(excelValue);
   if (type === MAP_TYPES.budgetSource) {
@@ -129,18 +92,10 @@ export async function resolveMapping(type, excelValue, context = {}) {
     };
   }
 
-  const seeds = DEFAULT_SEEDS[type] || {};
-  const seedKey = type === MAP_TYPES.budgetSource ? key : normalizeText(excelValue);
-  const seed = seeds[seedKey] || seeds[normalizeCity(excelValue)] || seeds[normalizeText(excelValue)];
-  if (seed) {
-    return { siteValue: seed.siteValue, labelIndex: seed.labelIndex, selector: seed.selector, fromSeed: true };
-  }
-
-  if (type === MAP_TYPES.city) {
-    const normalized = normalizeCity(excelValue);
-    const citySeed = seeds[normalized];
-    if (citySeed) return { siteValue: citySeed.siteValue, fromSeed: true };
-  }
+  // A value that already IS a site option resolves to itself - nothing to translate. There
+  // are no built-in Excel->site maps: any other wording is asked once and saved.
+  const exact = exactSiteOption(type, excelValue);
+  if (exact) return { ...exact, fromSiteOption: true };
 
   return {
     needsInput: true,
@@ -152,10 +107,27 @@ export async function resolveMapping(type, excelValue, context = {}) {
   };
 }
 
+/**
+ * The site option `excelValue` equals verbatim (after whitespace normalization), or null.
+ * budgetType also carries its CATALOG label index. budgetSource / familyClassification have
+ * no single-value site option to match (config list / computed tuple).
+ */
+export function exactSiteOption(type, excelValue) {
+  const v = normalizeText(excelValue);
+  if (!v || type === MAP_TYPES.budgetSource || type === MAP_TYPES.familyClassification) return null;
+  if (type === MAP_TYPES.budgetType) {
+    const hit = Object.entries(BUDGET_LABELS).find(([, label]) => normalizeText(label) === v);
+    return hit ? { siteValue: hit[1], labelIndex: Number(hit[0]) } : null;
+  }
+  const options = HARDCODED_SUGGESTIONS[type] || [];
+  const hit = options.find((o) => normalizeText(o) === v);
+  return hit ? { siteValue: hit } : null;
+}
+
 /** Built-in starting picklist per type - merged with operator-managed categories below.
  * budgetSource starts empty on purpose: it has no fixed site enum, it becomes
  * categorical purely through use (see addCategory/saveMapping) and manual additions
- * in Settings → קטגוריות. item starts seeded from item-catalog.js and grows the same
+ * in Settings → קטגוריות. item starts with every catalog-data.js item name and grows the same
  * way as new items are captured/used. */
 export const HARDCODED_SUGGESTIONS = {
   [MAP_TYPES.budgetType]: Object.values(BUDGET_LABELS),

@@ -37,11 +37,12 @@ describe('mappingKey', () => {
       budgetLabel: 'סיוע חירום למשפחות',
       city: 'ביתר',
     });
-    assert.equal(key, 'סיוע חירום למשפחות::ביתר עילית');
+    // No alias table: the city is keyed as written (spelling variants are operator mappings).
+    assert.equal(key, 'סיוע חירום למשפחות::ביתר');
   });
   test('budgetSource still keys on legacy budgetType context (migration fallback)', () => {
     const key = mappingKey(MAP_TYPES.budgetSource, 'ignored', { budgetType: 'משפחות', city: 'ביתר' });
-    assert.equal(key, 'משפחות::ביתר עילית');
+    assert.equal(key, 'משפחות::ביתר');
   });
   test('familyClassification keys on householdSize+maritalStatus from context', () => {
     const key = mappingKey(MAP_TYPES.familyClassification, 'ignored', { householdSize: 3, maritalStatus: 'נשוי/אה' });
@@ -58,11 +59,24 @@ describe('mappingKey', () => {
 describe('resolveMapping', () => {
   beforeEach(resetStorage);
 
-  test('resolves from seed defaults when nothing is saved', async () => {
+  test('a value that is exactly a site option resolves to itself', async () => {
     const result = await resolveMapping(MAP_TYPES.city, 'אלעד');
     assert.equal(result.needsInput, undefined);
     assert.equal(result.siteValue, 'אלעד');
-    assert.equal(result.fromSeed, true);
+    assert.equal(result.fromSiteOption, true);
+  });
+
+  test('no built-in maps: Excel wording that is not a site option asks the operator', async () => {
+    for (const [type, v] of [
+      [MAP_TYPES.city, 'ביתר'],
+      [MAP_TYPES.city, 'חברון'],
+      [MAP_TYPES.budgetType, 'משפחות'],
+      [MAP_TYPES.sector, 'יהודיה'],
+      [MAP_TYPES.maritalStatus, 'נשואה'],
+      [MAP_TYPES.birthCountry, 'מרוקו'],
+    ]) {
+      assert.equal((await resolveMapping(type, v)).needsInput, true, `${type}: ${v}`);
+    }
   });
 
   test('unknown value needs input and carries suggestions', async () => {
@@ -72,24 +86,24 @@ describe('resolveMapping', () => {
     assert.ok(result.suggestions.includes('אלעד'));
   });
 
-  test('a saved operator mapping takes priority over a seed', async () => {
+  test('a saved operator mapping takes priority over an exact site option', async () => {
     await saveMapping(MAP_TYPES.city, 'אלעד', 'שם אחר לגמרי');
     const result = await resolveMapping(MAP_TYPES.city, 'אלעד');
     assert.equal(result.siteValue, 'שם אחר לגמרי');
     assert.equal(result.fromUser, true);
   });
 
-  test('deleteMapping removes a saved mapping and falls back to the seed again', async () => {
+  test('deleteMapping removes a saved mapping and falls back to the site option again', async () => {
     await saveMapping(MAP_TYPES.city, 'אלעד', 'שם אחר לגמרי');
     await deleteMapping(MAP_TYPES.city, 'אלעד');
     const result = await resolveMapping(MAP_TYPES.city, 'אלעד');
-    assert.equal(result.fromSeed, true);
+    assert.equal(result.fromSiteOption, true);
     assert.equal(result.siteValue, 'אלעד');
   });
 
-  test('budgetType seed carries a labelIndex', async () => {
-    const result = await resolveMapping(MAP_TYPES.budgetType, 'משפחות');
-    assert.equal(result.labelIndex, 1);
+  test('an exact budget label carries its labelIndex', async () => {
+    assert.equal((await resolveMapping(MAP_TYPES.budgetType, 'סיוע חירום למשפחות')).labelIndex, 1);
+    assert.equal((await resolveMapping(MAP_TYPES.budgetType, 'של"מ')).labelIndex, 5);
   });
 
   test('budgetSource has no seed and needs input by default', async () => {
@@ -135,8 +149,9 @@ describe('resolveMapping', () => {
       { budgetType: 'משפחות', city: 'אלעד' },
       { siteValues: ['srcA', 'srcB'] }
     );
+    // "משפחות" resolves (via the operator's budgetType mapping) to "סיוע חירום למשפחות".
+    await saveMapping(MAP_TYPES.budgetType, 'משפחות', 'סיוע חירום למשפחות', {}, { labelIndex: 1 });
     await migrateBudgetSourceToLabelKeys();
-    // "משפחות" resolves (via the budgetType seed) to the label "סיוע חירום למשפחות".
     assert.deepEqual(await getBudgetSourceList('סיוע חירום למשפחות', 'אלעד'), ['srcA', 'srcB']);
     // The old raw key is gone.
     assert.deepEqual(await getBudgetSourceList('משפחות', 'אלעד'), []);
@@ -197,12 +212,12 @@ describe('categorical suggestions (item/budgetSource growth)', () => {
     assert.ok(suggestions.includes('מזון (סופר,מכולת,ספק מזון)'));
   });
 
-  test('a catalog item name resolves to itself via a seed (no prompt)', async () => {
+  test('a catalog item name resolves to itself (no prompt)', async () => {
     const known = catalogItemNames()[0];
     const result = await resolveMapping(MAP_TYPES.item, known);
     assert.equal(result.needsInput, undefined);
     assert.equal(result.siteValue, known);
-    assert.equal(result.fromSeed, true);
+    assert.equal(result.fromSiteOption, true);
   });
 });
 

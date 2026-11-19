@@ -76,38 +76,10 @@ export function normalizeIdNumber(id) {
   return digits.length < 9 ? digits.padStart(9, '0') : digits;
 }
 
+/** City comparison key. Whitespace-only normalization - spelling variants (ביתר / ביתר עלית…)
+ * are operator mappings (city), not a built-in alias table. */
 export function normalizeCity(city) {
-  const c = normalizeText(city);
-  const aliases = {
-    // ביתר עילית – common Excel spellings
-    'ביתר': 'ביתר עילית',
-    'ביתר עילית': 'ביתר עילית',
-    'ביתר עילית ': 'ביתר עילית',
-    'ביתר עלית': 'ביתר עילית',
-    'ביתר עיית': 'ביתר עילית',
-    'beytar': 'ביתר עילית',
-    // אלעד
-    'אלעד': 'אלעד',
-    'elad': 'אלעד',
-    // בית אל
-    'בית אל': 'בית אל',
-    'bet-el': 'בית אל',
-    // מודיעין
-    'מודיעין': 'מודיעין עילית',
-    'מודיעין עילית': 'מודיעין עילית',
-    'modiin': 'מודיעין עילית',
-    // בני ברק
-    'בני ברק': 'בני ברק',
-    'bnei-brak': 'בני ברק',
-    'bnei brak': 'בני ברק',
-    // חברון
-    'חברון': 'חברון',
-    'hevron': 'חברון',
-    'hebron': 'חברון',
-    'מטה בנימין': 'מטה בנימין',
-  };
-  const key = c.toLowerCase();
-  return aliases[c] || aliases[key] || c;
+  return normalizeText(city);
 }
 
 export function formatPhone(phone) {

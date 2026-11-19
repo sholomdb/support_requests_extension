@@ -31,6 +31,9 @@ const DATA_START_ROW = 7;
 /** Column letter whose value is the birth date (read raw - see getCellRaw). */
 const BIRTHDATE_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'birthDate');
 
+const LAST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'lastName');
+const FIRST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'firstName');
+
 function cellRef(col, row) {
   return `${col}${row}`;
 }
@@ -94,12 +97,17 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
   const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
   const rows = [];
   let dataIndex = 0;
+  // Rows skipped for a missing ת.ז. even though they have a name - reported to the operator
+  // (a row with no ID and no name is just an empty row and isn't counted).
+  const droppedNoIdRows = [];
 
   for (let r = DATA_START_ROW; r <= range.e.r + 1; r++) {
     const parsed = parseRow(sheet, dataIndex, r);
     if (parsed) {
       rows.push(parsed);
       dataIndex += 1;
+    } else if (getCellValue(sheet, LAST_NAME_COL, r) || getCellValue(sheet, FIRST_NAME_COL, r)) {
+      droppedNoIdRows.push(r);
     }
   }
 
@@ -107,7 +115,9 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
     throw new Error(`לא נמצאו שורות נתונים (שורה ${DATA_START_ROW}+ עם ת.ז.)`);
   }
 
-  const cities = [...new Set(rows.map((row) => row.city))];
+  // An empty city cell is filled later with the logged-in account's city
+  // (pipeline fillEmptyCity / accountCityFromSources), not guessed from the file.
+  const cities = [...new Set(rows.map((row) => row.city).filter(Boolean))];
   const city = cities.length === 1 ? cities[0] : cities.join(', ');
 
   if (cities.length > 1) {
@@ -121,6 +131,7 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
     city: cities.length === 1 ? cities[0] : null,
     cities,
     totalAmount,
+    droppedNoIdRows,
     fileName,
     parsedAt: new Date().toISOString(),
   };

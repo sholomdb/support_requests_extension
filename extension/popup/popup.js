@@ -19,8 +19,11 @@ import {
   fileIdOf,
   ROW_STATUS,
   STEP_STATUS,
+  DEFAULTED_LABELS,
+  accountCityFromSources,
+  fillEmptyCity,
 } from '../shared/pipeline.js';
-import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
+import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys, getAllMappings } from '../shared/mappings.js';
 import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
 import { buildSmsRequest, buildVerifyRequest, parseVerifyResponse } from '../shared/ft-login.js';
 import { getCityCredentials } from '../shared/storage.js';
@@ -214,9 +217,38 @@ function showNextQueueItem() {
   showMappingPrompt(pendingMapping);
 }
 
+/** The logged-in account's city (whose budget we use), from the stored home-page budget
+ * sources - see pipeline accountCityFromSources. '' when the balances weren't read yet. */
+async function getAccountCity() {
+  const snapshot = await getBudgetSourceRemaining();
+  const bs = (await getAllMappings())[MAP_TYPES.budgetSource] || {};
+  return accountCityFromSources(snapshot, bs, settings.cities);
+}
+
+/** Fills empty city cells with the account's city; logs when some stay empty. */
+async function withAccountCity(rows, { quiet = false } = {}) {
+  if (!rows.some((r) => !normalizeText(r.city))) return rows;
+  const city = await getAccountCity();
+  const filled = fillEmptyCity(rows, city);
+  const stillEmpty = filled.filter((r) => !normalizeText(r.city)).length;
+  if (stillEmpty && !quiet) {
+    log(`⚠ ${stillEmpty} שורות ללא עיר ועיר החשבון לא זוהתה – קרא יתרות מדף הבית (או מלא עיר באקסל)`);
+  }
+  return filled;
+}
+
+/** The file's city as the operator mapped it (fields.citySearch), so login/display use the
+ * site's city even when the Excel spelling differs - there's no built-in alias table. */
+function resolvedFileCity(builtRows, parsed) {
+  const resolved = [...new Set(builtRows.map((r) => r.fields?.citySearch).filter(Boolean))];
+  if (!resolved.length) return { city: parsed.city, cities: parsed.cities };
+  return { city: resolved.length === 1 ? resolved[0] : null, cities: resolved };
+}
+
 /** Runs the fix+validate pipeline for every row using already-resolved mappings,
  * and merges with the previous session's progress when it's the same file. */
 async function finalizeUpload(parsed, fileId, previousSession) {
+  parsed = { ...parsed, rows: await withAccountCity(parsed.rows, { quiet: true }) };
   const { resolved } = await collectMappingQueue(parsed.rows, fileId, settings);
   const builtRows = parsed.rows.map((r) => buildRow(r, resolved, fileId));
 
@@ -266,7 +298,7 @@ async function finalizeUpload(parsed, fileId, previousSession) {
   }
 
   const newSession = {
-    parsedFile: { ...parsed, fileId, rows: builtRows, remainingSnapshot },
+    parsedFile: { ...parsed, ...resolvedFileCity(builtRows, parsed), fileId, rows: builtRows, remainingSnapshot },
     requests,
     currentIndex: sameFile ? Math.min(previousSession.currentIndex ?? 0, requests.length - 1) : 0,
     log: previousSession?.log || [],
@@ -308,6 +340,7 @@ async function handleFileUpload(e) {
       session = null;
     }
 
+    parsed.rows = await withAccountCity(parsed.rows);
     const { queue } = await collectMappingQueue(parsed.rows, fileId, settings);
     if (queue.length) await resolveMappingQueueInteractive(queue);
 
@@ -315,6 +348,12 @@ async function handleFileUpload(e) {
     showFileUI(session);
     showCurrentRow();
     log(`נטען קובץ: ${session.requests.length} שורות, סה"כ ${formatCurrency(session.parsedFile.totalAmount)} ₪`);
+    const droppedNoId = parsed.droppedNoIdRows || [];
+    if (droppedNoId.length) {
+      log(
+        `⚠ ${droppedNoId.length} שורות עם שם אך ללא ת.ז. דולגו (שורות באקסל: ${droppedNoId.join(', ')})`
+      );
+    }
     await persistLog();
   } catch (err) {
     alert(`Error loading file: ${err.message}`);
@@ -395,6 +434,12 @@ function showCurrentRow() {
   const errorsHtml = request.errors?.length ?
       `<div style="color:#c0392b">⚠ ${request.errors.map((e) => e.reason).join('; ')}</div>`
     : '';
+  const defaultedKeys = Object.keys(f.defaulted || {});
+  const defaultsHtml = defaultedKeys.length ?
+      `<div style="color:#7f8c8d">ℹ תא ריק באקסל – ערך ברירת מחדל/מוסק (ערך קיים באתר נשמר): ${defaultedKeys
+        .map((k) => DEFAULTED_LABELS[k] || k)
+        .join(', ')}</div>`
+    : '';
 
   $('rowDetails').innerHTML = `
     <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ID ${f.idNumber || ''}<br>
@@ -408,6 +453,7 @@ function showCurrentRow() {
     }<br>
     <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
+    ${defaultsHtml}
   `;
   renderRowList();
   updateProgress();
@@ -1287,7 +1333,12 @@ async function pickLoginCredentials() {
   let city = null;
   const fileCity = session?.parsedFile?.city;
   if (fileCity) {
-    city = configured.find((c) => normalizeCity(c) === normalizeCity(fileCity)) || null;
+    city =
+      configured.find(
+        (c) =>
+          normalizeCity(c) === normalizeCity(fileCity) ||
+          normalizeCity(settings.cities?.[c]?.siteSearch) === normalizeCity(fileCity)
+      ) || null;
   }
   if (!city) city = configured.length === 1 ? configured[0] : null;
   if (!city) {
