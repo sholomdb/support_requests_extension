@@ -19,6 +19,7 @@ import {
   fileIdOf,
   ROW_STATUS,
   STEP_STATUS,
+  DEFAULTED_LABELS,
 } from '../shared/pipeline.js';
 import { saveMapping, MAP_TYPES, migrateBudgetSourceToLabelKeys } from '../shared/mappings.js';
 import { buildIdLookupRequest, parseMappingResponse, isAuthFailure } from '../shared/api.js';
@@ -315,6 +316,12 @@ async function handleFileUpload(e) {
     showFileUI(session);
     showCurrentRow();
     log(`נטען קובץ: ${session.requests.length} שורות, סה"כ ${formatCurrency(session.parsedFile.totalAmount)} ₪`);
+    const droppedNoId = parsed.droppedNoIdRows || [];
+    if (droppedNoId.length) {
+      log(
+        `⚠ ${droppedNoId.length} שורות עם שם אך ללא ת.ז. דולגו (שורות באקסל: ${droppedNoId.join(', ')})`
+      );
+    }
     await persistLog();
   } catch (err) {
     alert(`Error loading file: ${err.message}`);
@@ -395,6 +402,12 @@ function showCurrentRow() {
   const errorsHtml = request.errors?.length ?
       `<div style="color:#c0392b">⚠ ${request.errors.map((e) => e.reason).join('; ')}</div>`
     : '';
+  const defaultedKeys = Object.keys(f.defaulted || {});
+  const defaultsHtml = defaultedKeys.length ?
+      `<div style="color:#7f8c8d">ℹ תא ריק באקסל – ערך ברירת מחדל/מוסק (ערך קיים באתר נשמר): ${defaultedKeys
+        .map((k) => DEFAULTED_LABELS[k] || k)
+        .join(', ')}</div>`
+    : '';
 
   $('rowDetails').innerHTML = `
     <strong>${f.firstName || ''} ${f.lastName || ''}</strong> | ID ${f.idNumber || ''}<br>
@@ -408,6 +421,7 @@ function showCurrentRow() {
     }<br>
     <strong>Amount:</strong> ${formatCurrency(Number(f.amount) || 0)} ₪ | <em>${f.reason || ''}</em>
     ${errorsHtml}
+    ${defaultsHtml}
   `;
   renderRowList();
   updateProgress();

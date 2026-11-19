@@ -31,6 +31,20 @@ const DATA_START_ROW = 7;
 /** Column letter whose value is the birth date (read raw - see getCellRaw). */
 const BIRTHDATE_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'birthDate');
 
+const LAST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'lastName');
+const FIRST_NAME_COL = Object.keys(COLUMN_MAP).find((c) => COLUMN_MAP[c] === 'firstName');
+
+function mostCommon(values) {
+  const counts = new Map();
+  let best = '';
+  for (const v of values) {
+    const n = (counts.get(v) || 0) + 1;
+    counts.set(v, n);
+    if (n > (counts.get(best) || 0)) best = v;
+  }
+  return best;
+}
+
 function cellRef(col, row) {
   return `${col}${row}`;
 }
@@ -94,17 +108,33 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
   const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
   const rows = [];
   let dataIndex = 0;
+  // Rows skipped for a missing ת.ז. even though they have a name - reported to the operator
+  // (a row with no ID and no name is just an empty row and isn't counted).
+  const droppedNoIdRows = [];
 
   for (let r = DATA_START_ROW; r <= range.e.r + 1; r++) {
     const parsed = parseRow(sheet, dataIndex, r);
     if (parsed) {
       rows.push(parsed);
       dataIndex += 1;
+    } else if (getCellValue(sheet, LAST_NAME_COL, r) || getCellValue(sheet, FIRST_NAME_COL, r)) {
+      droppedNoIdRows.push(r);
     }
   }
 
   if (rows.length === 0) {
     throw new Error(`לא נמצאו שורות נתונים (שורה ${DATA_START_ROW}+ עם ת.ז.)`);
+  }
+
+  // An empty city cell takes the file's city (the most common non-empty city in the file).
+  const fileCity = mostCommon(rows.map((row) => row.city).filter(Boolean));
+  if (fileCity) {
+    for (const row of rows) {
+      if (!row.city) {
+        row.city = fileCity;
+        row.cityFromFile = true;
+      }
+    }
   }
 
   const cities = [...new Set(rows.map((row) => row.city))];
@@ -121,6 +151,7 @@ export function parseExcelBuffer(arrayBuffer, fileName = '') {
     city: cities.length === 1 ? cities[0] : null,
     cities,
     totalAmount,
+    droppedNoIdRows,
     fileName,
     parsedAt: new Date().toISOString(),
   };

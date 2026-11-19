@@ -42,27 +42,35 @@ any of this — it's the single place fix/validate logic lives.
 | Output field | Excel source | Fix | Validate | Step |
 |---|---|---|---|---|
 | idNumber | תעודת זהות | pad to 9 digits | must be 9 digits | 1 |
-| lastName / firstName | שם משפחה / שם פרטי | trim/normalize | required | 1 |
-| gender | מגדר | trim/normalize | required | 1 |
-| sector | מגזר | **mapped**, falls back to `inferSector` | required (resolved) | 1 |
+| lastName / firstName | שם משפחה / שם פרטי | trim/normalize; empty → `ישראלי` / `ישראל` | required | 1 |
+| gender | מגדר | trim/normalize; empty → `זכר` | required | 1 |
+| sector | מגזר | empty → `יהודי`; **mapped**, falls back to `inferSector` | required (resolved) | 1 |
 | ministryFileExists | (constant) | always `כן` | – | 1 |
 | mutavKnowledge | (constant) | always `כן` | – | 1 |
-| maritalStatus | מצב משפחתי | **mapped**, falls back to `inferMaritalStatus` | required (resolved) | 1 |
-| householdSize | נפשות | to string | must be > 0 | 1 |
-| holocaustSurvivor | ניצול שואה | normalize to כן/לא | – | 1 |
-| birthDate | תאריך לידה | normalize to DD/MM/YYYY | must match format | 1 |
-| street / building | רחוב / בנין | trim/normalize | – | 1 |
-| citySearch | שם הרשות | **mapped** (city), falls back to `getCitySiteSearch` | required (resolved) | 1 |
+| maritalStatus | מצב משפחתי | empty → inferred from נפשות (1 → `רווק/ה`, else `נשוי/אה`); **mapped**, falls back to `inferMaritalStatus` | required (resolved) | 1 |
+| householdSize | נפשות | first number in the cell; empty/0 → inferred from the resolved marital status (married → 2, else 1; both empty → 2) | must be > 0 | 1 |
+| holocaustSurvivor | ניצול שואה | explicit כן/לא (yes/no) wins; empty/unrecognized → `כן` for the ניצולי שואה budget, else `לא` | – | 1 |
+| birthDate | תאריך לידה | normalize to DD/MM/YYYY; empty → `01/01/2000` | must be a real date | 1 |
+| street / building | רחוב / בנין | trim/normalize; both optional (empty → left as-is on the site) | – | 1 |
+| citySearch | שם הרשות | empty → the file's most common city (excel-parser); **mapped** (city), falls back to `getCitySiteSearch` | required (resolved) | 1 |
 | settlement | ישוב | only when city is מטה בנימין | required if מטה בנימין | 1 |
-| birthCountry | ארץ לידה | **mapped**, falls back to `inferBirthCountry` | required (resolved) | 1 |
-| familyClassification | נפשות + מצב משפחתי | **mapped**, falls back to `inferFamilyClassification` | required (resolved) | 1 |
-| mobilePhone / homePhone | טלפון נייד | `routePhone`: pad to 10 digits — if `05` → mobile (10 digits); else → home padded to **9** digits, and if that doesn't start with a valid area code (02/03/04/08/09) it becomes the placeholder `020000000` | one of the two has a value | 1 |
+| birthCountry | ארץ לידה | empty → `ישראל`; **mapped**, falls back to `inferBirthCountry` | required (resolved) | 1 |
+| familyClassification | נפשות (effective) + מצב משפחתי | **mapped**, falls back to `inferFamilyClassification` | required (resolved) | 1 |
+| mobilePhone / homePhone | טלפון נייד | `routePhone`: +972/00972/972 prefix → local 0; pad to 10 digits — if `05` → mobile (10 digits); else → home padded to **9** digits, and if that doesn't start with a valid area code (02/03/04/08/09) it becomes the placeholder `020000000` | one of the two has a value | 1 |
 | budgetType / budgetLabelIndex | סוג תקציב | **mapped** to CATALOG label index | required (resolved) | 2 |
-| item / itemSelector / itemMaxPrice | פריט | **mapped** to a catalog item name; max price from catalog-data.js | required (resolved) + must exist in the row's budget | 2 |
+| item / itemSelector / itemMaxPrice | פריט | empty → `מזון` (then mapped like any Excel text); **mapped** to a catalog item name; max price from catalog-data.js | required (resolved) + must exist in the row's budget | 2 |
 | budgetSource | סוג תקציב + שם הרשות | **mapped**, keyed by budget type + city | required (resolved) | 3 |
 | amount | סכום סיוע בש"ח | to string | must be > 0 | 3 |
-| reason | נימוקים לאישור | trim/normalize | – | 3 |
+| reason | נימוקים לאישור | trim/normalize; empty → `עזרה` | – | 3 |
 | supplier | (constant) | always `אש"ל חב"ד ירושלים` | – | 3 |
+
+**Empty-cell defaults** live in `EMPTY_DEFAULTS` (`extension/shared/config.js`) and apply only
+to an EMPTY cell; a non-empty wrong value still goes through mapping/validation. Every field
+filled from a default/inference is listed in `fields.defaulted` (and shown on the row in the
+side panel). On MUTAV the content script keeps the value the site already shows after the
+ID lookup (an existing beneficiary) for those fields, and types the default only into a
+field the site left empty. Rows with a name but no ת.ז. are skipped and reported in the log
+(`parsed.droppedNoIdRows`).
 
 "**mapped**" fields go through the batched operator-taught mapping store
 (`extension/shared/mappings.js`) — view/edit/delete them any time in the extension's

@@ -74,6 +74,36 @@ function isMarried(maritalStatus) {
   return m.includes('נשוי') || m.includes('ידוע');
 }
 
+/** First whole number in a household-size cell ("4", "4 נפשות", 4) - 0 when none/empty. */
+export function parseHouseholdSize(value) {
+  const m = String(value ?? '').match(/\d+/);
+  return m ? Number(m[0]) : 0;
+}
+
+/**
+ * Household size actually used for the row: the Excel value when it's a positive number,
+ * otherwise inferred from the (resolved) marital status - married/ידוע בציבור -> 2,
+ * any other known status -> 1, and no marital status either -> the default 2 (a married
+ * couple, see EMPTY_DEFAULTS). Returns { value: string, defaulted: boolean }.
+ */
+export function effectiveHouseholdSize(rawSize, resolvedMarital, defaultSize = '2') {
+  const size = parseHouseholdSize(rawSize);
+  if (size > 0) return { value: String(size), defaulted: false };
+  const m = normalizeMarital(resolvedMarital);
+  if (!m) return { value: String(defaultSize), defaulted: true };
+  return { value: isMarried(m) ? '2' : '1', defaulted: true };
+}
+
+/**
+ * Marital status to use when the Excel cell is empty, inferred from household size:
+ * a household of 1 -> רווק/ה, anything else (including an empty size) -> the default
+ * (נשוי/אה). Returns '' when the cell isn't empty (the normal mapping path handles it).
+ */
+export function inferMaritalFromSize(rawMarital, rawSize, defaultMarital = 'נשוי/אה') {
+  if (normalizeMarital(rawMarital)) return '';
+  return parseHouseholdSize(rawSize) === 1 ? 'רווק/ה' : defaultMarital;
+}
+
 /**
  * Infer family classification from household size + marital status.
  * Returns { value } or { needsInput: true, reason }
@@ -179,7 +209,13 @@ const PLACEHOLDER_HOME_PHONE = '020000000';
  *    with the placeholder 020000000 so the request can still proceed.
  */
 export function routePhone(phone) {
-  const digits = String(phone ?? '').replace(/\D/g, '');
+  let digits = String(phone ?? '').replace(/\D/g, '');
+  // International form: +972 / 00972 / 972 followed by the number without its leading 0
+  // (e.g. +972-50-123-4567 -> 0501234567, 972-2-1234567 -> 021234567).
+  digits = digits.replace(/^00/, '');
+  if (digits.startsWith('972') && (digits.length === 11 || digits.length === 12)) {
+    digits = `0${digits.slice(3)}`;
+  }
   const asMobile = digits.padStart(10, '0');
   // A valid Israeli mobile is exactly 10 digits (05XXXXXXXX). More than 10 digits is an
   // invalid mobile - fall back to the constant home number rather than filling it.
@@ -191,6 +227,19 @@ export function routePhone(phone) {
     home = PLACEHOLDER_HOME_PHONE;
   }
   return { field: 'homePhone', value: home };
+}
+
+/**
+ * Holocaust-survivor answer for the row: an explicit כן/לא (or yes/no) in Excel wins;
+ * an empty or unrecognized cell is decided by the budget - כן for the ניצולי שואה budget,
+ * לא for anything else. Returns { value, defaulted }.
+ */
+export function resolveHolocaust(value, budgetLabel) {
+  const v = normalizeText(value).toLowerCase();
+  if (v === 'כן' || v === 'yes') return { value: 'כן', defaulted: false };
+  if (v === 'לא' || v === 'no') return { value: 'לא', defaulted: false };
+  const isSurvivorBudget = normalizeText(budgetLabel).includes('ניצולי שואה');
+  return { value: isSurvivorBudget ? 'כן' : 'לא', defaulted: true };
 }
 
 export function normalizeHolocaust(value) {

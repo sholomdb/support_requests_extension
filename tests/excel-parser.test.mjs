@@ -88,3 +88,29 @@ describe('parseExcelBuffer against the real sample files', () => {
     assert.throws(() => parseExcelBuffer(out, 'empty.xlsx'), /לא נמצאו שורות נתונים/);
   });
 });
+
+describe('parseExcelBuffer: empty city + dropped no-ID rows', () => {
+  function makeWorkbook(dataRows) {
+    // Rows 1-5 blank, row 6 headers, data from row 7 (columns A..U as in COLUMN_MAP).
+    const aoa = [[], [], [], [], [], ['סוג תקציב', 'עיר', 'ת.ז.', '', 'שם משפחה', 'שם פרטי']];
+    for (const r of dataRows) aoa.push(r);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Sheet1');
+    return XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  }
+
+  test('an empty city cell takes the file city, and named rows without ת.ז. are reported', () => {
+    const buf = makeWorkbook([
+      ['משפחות', 'אלעד', '123456782', '', 'כהן', 'דוד'],
+      ['משפחות', '', '234567891', '', 'לוי', 'משה'],
+      ['משפחות', 'אלעד', '', '', 'ללא', 'תז'], // row 9: name, no id -> dropped + reported
+      ['', '', '', '', '', ''], // empty row -> dropped silently
+    ]);
+    const parsed = parseExcelBuffer(buf, 't.xlsx');
+    assert.equal(parsed.rows.length, 2);
+    assert.equal(parsed.rows[1].city, 'אלעד');
+    assert.equal(parsed.rows[1].cityFromFile, true);
+    assert.equal(parsed.rows[0].cityFromFile, undefined);
+    assert.deepEqual(parsed.droppedNoIdRows, [9]);
+  });
+});

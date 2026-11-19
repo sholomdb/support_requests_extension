@@ -6,7 +6,7 @@
  * reasoning behind the `rowKey`/`requestId` split.
  */
 import { normalizeText, normalizeIdNumber, normalizeBirthDate, isValidBirthDate } from './utils.js';
-import { getCitySiteSearch, isMatehBinyamin, CONSTANTS, SHALAM_LABEL_INDEX } from './config.js';
+import { getCitySiteSearch, isMatehBinyamin, CONSTANTS, SHALAM_LABEL_INDEX, EMPTY_DEFAULTS as D } from './config.js';
 import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice, getAllMappings } from './mappings.js';
 import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.js';
 import {
@@ -15,7 +15,9 @@ import {
   inferMaritalStatus,
   inferSector,
   routePhone,
-  normalizeHolocaust,
+  resolveHolocaust,
+  effectiveHouseholdSize,
+  inferMaritalFromSize,
 } from './inference.js';
 
 export const ROW_STATUS = {
@@ -30,6 +32,58 @@ export const STEP_STATUS = { PENDING: 'pending', FILLED: 'filled', FAILED: 'fail
 function required(reason) {
   return (value) => (value ? null : reason);
 }
+
+/** Excel text, or `fallback` when the cell is empty. */
+function orDefault(value, fallback) {
+  return normalizeText(value) || fallback;
+}
+
+// Source values (Excel text with the empty-cell default applied) for the categorical fields.
+// Shared by `source` and `inferFallback`, so a defaulted value resolves exactly like a typed one.
+const sectorSource = (raw) => orDefault(raw.sector, D.sector);
+const maritalSource = (raw) =>
+  normalizeText(raw.maritalStatus) || inferMaritalFromSize(raw.maritalStatus, raw.householdSize, D.maritalStatus);
+const birthCountrySource = (raw) => orDefault(raw.birthCountry, D.birthCountry);
+const householdOf = (raw, fields) => effectiveHouseholdSize(raw.householdSize, fields?.maritalStatus, D.householdSize);
+
+/**
+ * Which site-visible fields were filled from a default/inference because the Excel cell was
+ * empty. The content script prefers the site's own value for these (an existing beneficiary
+ * found by the ID lookup) and only types the default into a field the site left empty.
+ */
+function defaultedFieldsOf(raw, fields) {
+  const empty = (v) => !normalizeText(v);
+  const d = {};
+  if (empty(raw.lastName)) d.lastName = true;
+  if (empty(raw.firstName)) d.firstName = true;
+  if (empty(raw.gender)) d.gender = true;
+  if (empty(raw.sector)) d.sector = true;
+  if (empty(raw.maritalStatus)) d.maritalStatus = true;
+  if (householdOf(raw, fields).defaulted) d.householdSize = true;
+  if (d.maritalStatus || d.householdSize) d.familyClassification = true;
+  if (empty(raw.birthCountry)) d.birthCountry = true;
+  if (empty(raw.birthDate)) d.birthDate = true;
+  if (empty(raw.item)) d.item = true;
+  if (empty(raw.justification)) d.reason = true;
+  return d;
+}
+
+/** Hebrew labels for the "filled from default" note shown on a row. */
+export const DEFAULTED_LABELS = {
+  lastName: 'שם משפחה',
+  firstName: 'שם פרטי',
+  gender: 'מגדר',
+  sector: 'מגזר',
+  maritalStatus: 'מצב משפחתי',
+  householdSize: 'נפשות',
+  familyClassification: 'סיווג משפחה',
+  holocaustSurvivor: 'ניצול שואה',
+  birthCountry: 'ארץ לידה',
+  birthDate: 'תאריך לידה',
+  item: 'פריט',
+  reason: 'נימוק',
+  city: 'עיר',
+};
 
 function defaultOutputAs(field) {
   // mapType fields without a custom outputAs just want the plain site value,
@@ -60,9 +114,11 @@ export function rowKeyOf(fileId, rawRow) {
  */
 const FIELD_PIPELINE = [
   { key: 'idNumber', step: 1, fix: (raw) => normalizeIdNumber(raw.idNumber), validate: (v) => (/^\d{9}$/.test(v) ? null : 'ת.ז. לא תקינה (נדרשות 9 ספרות)') },
-  { key: 'lastName', step: 1, fix: (raw) => normalizeText(raw.lastName), validate: required('שם משפחה חסר') },
-  { key: 'firstName', step: 1, fix: (raw) => normalizeText(raw.firstName), validate: required('שם פרטי חסר') },
-  { key: 'gender', step: 1, fix: (raw) => normalizeText(raw.gender), validate: required('מגדר חסר') },
+  // Empty cells get the EMPTY_DEFAULTS value (config.js) - see defaultedFieldsOf for how the
+  // fill prefers the site's own value for an existing beneficiary.
+  { key: 'lastName', step: 1, fix: (raw) => orDefault(raw.lastName, D.lastName), validate: required('שם משפחה חסר') },
+  { key: 'firstName', step: 1, fix: (raw) => orDefault(raw.firstName, D.firstName), validate: required('שם פרטי חסר') },
+  { key: 'gender', step: 1, fix: (raw) => orDefault(raw.gender, D.gender), validate: required('מגדר חסר') },
   {
     key: 'sector',
     step: 1,
@@ -71,8 +127,8 @@ const FIELD_PIPELINE = [
     // canonicalize automatically (inferFallback); anything else (e.g. "ערבי") prompts the
     // operator once and is saved as a mapping.
     mapType: MAP_TYPES.sector,
-    source: (raw) => raw.sector,
-    inferFallback: (raw) => inferSector(raw.sector),
+    source: sectorSource,
+    inferFallback: (raw) => inferSector(sectorSource(raw)),
     validate: required('מגזר לא נפתר'),
   },
   { key: 'ministryFileExists', step: 1, fix: () => 'כן' },
@@ -84,13 +140,22 @@ const FIELD_PIPELINE = [
     // site's נשוי/אה-style options. Known roots canonicalize automatically (inferFallback);
     // anything else prompts the operator once and is saved as a mapping.
     mapType: MAP_TYPES.maritalStatus,
-    source: (raw) => raw.maritalStatus,
-    inferFallback: (raw) => inferMaritalStatus(raw.maritalStatus),
+    // Empty cell: inferred from household size (1 -> רווק/ה, else נשוי/אה).
+    source: maritalSource,
+    inferFallback: (raw) => inferMaritalStatus(maritalSource(raw)),
     validate: required('מצב משפחתי לא נפתר'),
   },
-  { key: 'householdSize', step: 1, fix: (raw) => String(raw.householdSize || ''), validate: (v) => (Number(v) > 0 ? null : 'מספר נפשות לא תקין') },
-  { key: 'holocaustSurvivor', step: 1, fix: (raw) => normalizeHolocaust(raw.holocaustSurvivor) },
-  { key: 'birthDate', step: 1, fix: (raw) => normalizeBirthDate(raw.birthDate), validate: (v) => (isValidBirthDate(v) ? null : 'תאריך לידה לא תקין') },
+  // Empty/0/non-numeric: inferred from the resolved marital status (married -> 2, else 1).
+  { key: 'householdSize', step: 1, fix: (raw, fields) => householdOf(raw, fields).value, validate: (v) => (Number(v) > 0 ? null : 'מספר נפשות לא תקין') },
+  // Placeholder - the final value depends on the resolved budget, so it's set after the loop
+  // in buildRow (resolveHolocaust).
+  { key: 'holocaustSurvivor', step: 1, fix: (raw) => normalizeText(raw.holocaustSurvivor) },
+  {
+    key: 'birthDate',
+    step: 1,
+    fix: (raw) => normalizeBirthDate(raw.birthDate) || D.birthDate,
+    validate: (v) => (isValidBirthDate(v) ? null : 'תאריך לידה לא תקין'),
+  },
   { key: 'street', step: 1, fix: (raw) => normalizeText(raw.street) },
   { key: 'building', step: 1, fix: (raw) => normalizeText(raw.building) },
   {
@@ -113,8 +178,8 @@ const FIELD_PIPELINE = [
     key: 'birthCountry',
     step: 1,
     mapType: MAP_TYPES.birthCountry,
-    source: (raw) => raw.birthCountry,
-    inferFallback: (raw) => inferBirthCountry(raw.birthCountry),
+    source: birthCountrySource,
+    inferFallback: (raw) => inferBirthCountry(birthCountrySource(raw)),
     validate: required('ארץ לידה לא נפתרה'),
   },
   {
@@ -125,15 +190,16 @@ const FIELD_PIPELINE = [
     // after maritalStatus is canonicalized (dependsOn defers it until then). Keying on the
     // resolved value means "נשואה" and "נשוי/אה" share one tuple, not two.
     dependsOn: ['maritalStatus'],
-    source: (raw, fields) => `${raw.householdSize}::${normalizeText(fields?.maritalStatus)}`,
-    context: (raw, fields) => ({ householdSize: raw.householdSize, maritalStatus: fields?.maritalStatus }),
-    inferFallback: (raw, fields) => inferFamilyClassification(raw.householdSize, fields?.maritalStatus),
+    // Uses the EFFECTIVE household size (empty/0 inferred from marital status).
+    source: (raw, fields) => `${householdOf(raw, fields).value}::${normalizeText(fields?.maritalStatus)}`,
+    context: (raw, fields) => ({ householdSize: householdOf(raw, fields).value, maritalStatus: fields?.maritalStatus }),
+    inferFallback: (raw, fields) => inferFamilyClassification(householdOf(raw, fields).value, fields?.maritalStatus),
     // "זוג ללא ילדים" is only valid for a married couple of exactly 2 - flag any row
     // that resolved to it otherwise (a wrong mapping or bad source data).
     validate: (value, raw, fields) => {
       if (!value) return 'סיווג משפחה לא נפתר';
       if (value.includes('זוג ללא ילדים')) {
-        const size = Number(raw.householdSize) || 0;
+        const size = Number(fields?.householdSize) || 0;
         const married = /נשוי|ידוע/.test(normalizeText(fields?.maritalStatus));
         if (size !== 2 || !married) {
           return 'סיווג "זוג ללא ילדים" מחייב מצב משפחתי נשוי/אה וגודל משפחה 2';
@@ -161,7 +227,7 @@ const FIELD_PIPELINE = [
     key: 'item',
     step: 2,
     mapType: MAP_TYPES.item,
-    source: (raw) => raw.item,
+    source: (raw) => orDefault(raw.item, D.item),
     outputAs: (entry) => ({ itemSelector: entry?.selector, itemSiteValue: entry?.siteValue, itemMaxPrice: entry?.maxPrice ?? null }),
     validate: required('פריט לא נפתר'),
   },
@@ -189,7 +255,7 @@ const FIELD_PIPELINE = [
       v ? null : `מקור תקציב לא הוגדר בהגדרות עבור "${fields?.budgetSiteValue || raw.budgetType}" ב${raw.city}`,
   },
   { key: 'amount', step: 3, fix: (raw) => String(raw.amount), validate: (v) => (Number(v) > 0 ? null : 'סכום לא תקין') },
-  { key: 'reason', step: 3, fix: (raw) => normalizeText(raw.justification) },
+  { key: 'reason', step: 3, fix: (raw) => orDefault(raw.justification, D.reason) },
   { key: 'supplier', step: 3, fix: () => CONSTANTS.supplier },
 ];
 
@@ -317,7 +383,7 @@ export function buildRow(rawRow, resolvedMap, fileId) {
         outputSource = { siteValue: '', labelIndex: undefined, selector: undefined };
       }
     } else {
-      value = field.fix(rawRow);
+      value = field.fix(rawRow, fields);
       outputSource = value;
     }
 
@@ -342,6 +408,17 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     const catPrice = catalogMaxPrice(budget, item);
     if (catPrice != null) fields.itemMaxPrice = catPrice;
   }
+
+  // Holocaust survivor: explicit כן/לא wins; empty/unrecognized follows the resolved budget
+  // (ניצולי שואה -> כן, else לא).
+  const holocaust = resolveHolocaust(rawRow.holocaustSurvivor, fields.budgetSiteValue);
+  fields.holocaustSurvivor = holocaust.value;
+
+  fields.defaulted = defaultedFieldsOf(rawRow, fields);
+  if (holocaust.defaulted) fields.defaulted.holocaustSurvivor = true;
+  // City taken from the rest of the file (excel-parser fills an empty city cell) - not a
+  // site-prefill field, only reported in the row note.
+  if (rawRow.cityFromFile) fields.defaulted.city = true;
 
   // של"מ budgets need the fixed "בחירת אוכלוסיה" dropdown on WhoHowM; others leave it empty.
   fields.shalamProgram =

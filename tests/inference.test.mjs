@@ -167,3 +167,27 @@ describe('normalizeHolocaust', () => {
     assert.equal(normalizeHolocaust(''), 'לא');
   });
 });
+
+describe('routePhone international (972) format', () => {
+  test('+972 mobile becomes a local 05 number', async () => {
+    const { routePhone } = await import('../extension/shared/inference.js');
+    assert.deepEqual(routePhone('+972 50-123-4567'), { field: 'mobilePhone', value: '0501234567' });
+    assert.deepEqual(routePhone('00972501234567'), { field: 'mobilePhone', value: '0501234567' });
+    assert.deepEqual(routePhone('972-2-1234567'), { field: 'homePhone', value: '021234567' });
+  });
+});
+
+describe('resolveHolocaust / effectiveHouseholdSize / inferMaritalFromSize', () => {
+  test('behave as documented', async () => {
+    const { resolveHolocaust, effectiveHouseholdSize, inferMaritalFromSize } = await import('../extension/shared/inference.js');
+    assert.deepEqual(resolveHolocaust('', 'ניצולי שואה'), { value: 'כן', defaulted: true });
+    assert.deepEqual(resolveHolocaust('x', 'אזרחים ותיקים'), { value: 'לא', defaulted: true });
+    assert.deepEqual(resolveHolocaust('yes', ''), { value: 'כן', defaulted: false });
+    assert.deepEqual(effectiveHouseholdSize('0', 'גרוש/ה'), { value: '1', defaulted: true });
+    assert.deepEqual(effectiveHouseholdSize('', ''), { value: '2', defaulted: true });
+    assert.deepEqual(effectiveHouseholdSize(3, 'רווק/ה'), { value: '3', defaulted: false });
+    assert.equal(inferMaritalFromSize('', '1'), 'רווק/ה');
+    assert.equal(inferMaritalFromSize('', ''), 'נשוי/אה');
+    assert.equal(inferMaritalFromSize('גרוש/ה', '1'), '');
+  });
+});

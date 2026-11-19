@@ -217,11 +217,14 @@ describe('buildRow', () => {
     assert.ok(row.errors.some((e) => e.field === 'idNumber'));
   });
 
-  test('a missing required text field is invalid', () => {
-    const raw = makeRawRow({ lastName: '' });
+  test('an empty name gets the default ישראל ישראלי and is marked defaulted', () => {
+    const raw = makeRawRow({ lastName: '', firstName: '' });
     const row = buildRow(raw, fullyResolvedMap(raw), FILE_ID);
-    assert.equal(row.status, ROW_STATUS.INVALID);
-    assert.ok(row.errors.some((e) => e.field === 'lastName'));
+    assert.equal(row.status, ROW_STATUS.READY);
+    assert.equal(row.fields.firstName, 'ישראל');
+    assert.equal(row.fields.lastName, 'ישראלי');
+    assert.equal(row.fields.defaulted.lastName, true);
+    assert.equal(row.fields.defaulted.firstName, true);
   });
 
   test('a non-positive amount is invalid', () => {
@@ -639,5 +642,71 @@ describe('collectMappingQueue', () => {
 
     result = await collectMappingQueue([raw], FILE_ID, {});
     assert.ok(!result.queue.some((q) => q.type === MAP_TYPES.item));
+  });
+});
+
+describe('empty-cell defaults (end to end through collectMappingQueue)', () => {
+  beforeEach(() => installChromeStub());
+
+  async function build(overrides) {
+    // Every budget/city combo needs a configured source list; the default item "מזון" is not
+    // a catalog name, so (like any Excel wording) it's mapped once by the operator.
+    await saveMapping(MAP_TYPES.budgetSource, '', '', { budgetLabel: 'סיוע חירום למשפחות', city: 'אלעד' }, { siteValues: ['מקור'] });
+    await saveMapping(MAP_TYPES.budgetSource, '', '', { budgetLabel: 'ניצולי שואה', city: 'אלעד' }, { siteValues: ['מקור'] });
+    await saveMapping(MAP_TYPES.item, 'מזון', 'מזון (סופר,מכולת,ספק מזון)');
+    const raw = makeRawRow({ item: 'מזון (סופר,מכולת,ספק מזון)', ...overrides });
+    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
+    return { queue, row: buildRow(raw, resolved, FILE_ID) };
+  }
+
+  test('every empty cell resolves to its default without any operator prompt', async () => {
+    const { queue, row } = await build({
+      lastName: '', firstName: '', gender: '', sector: '', maritalStatus: '', householdSize: '',
+      birthCountry: '', birthDate: '', holocaustSurvivor: '', street: '', item: '', justification: '',
+    });
+    assert.deepEqual(queue, []);
+    assert.equal(row.status, ROW_STATUS.READY, JSON.stringify(row.errors));
+    const f = row.fields;
+    assert.equal(f.gender, 'זכר');
+    assert.equal(f.sector, 'יהודי');
+    assert.equal(f.birthCountry, 'ישראל');
+    assert.equal(f.birthDate, '01/01/2000');
+    assert.equal(f.maritalStatus, 'נשוי/אה');
+    assert.equal(f.householdSize, '2');
+    assert.equal(f.familyClassification, 'זוג ללא ילדים');
+    assert.equal(f.holocaustSurvivor, 'לא');
+    assert.equal(f.itemSiteValue, 'מזון (סופר,מכולת,ספק מזון)');
+    assert.equal(f.reason, 'עזרה');
+    assert.equal(f.street, '');
+    for (const k of ['gender', 'sector', 'birthCountry', 'birthDate', 'maritalStatus', 'householdSize', 'familyClassification', 'holocaustSurvivor', 'item', 'reason']) {
+      assert.equal(f.defaulted[k], true, k);
+    }
+  });
+
+  test('filled cells are not marked defaulted', async () => {
+    const { row } = await build({});
+    assert.deepEqual(row.fields.defaulted, {});
+  });
+
+  test('household size 0/empty is inferred from marital status', async () => {
+    assert.equal((await build({ householdSize: '0', maritalStatus: 'רווק/ה' })).row.fields.householdSize, '1');
+    assert.equal((await build({ householdSize: '', maritalStatus: 'נשוי/אה' })).row.fields.householdSize, '2');
+    assert.equal((await build({ householdSize: '5 נפשות' })).row.fields.householdSize, '5');
+  });
+
+  test('empty marital status is inferred from household size', async () => {
+    assert.equal((await build({ maritalStatus: '', householdSize: '1' })).row.fields.maritalStatus, 'רווק/ה');
+    assert.equal((await build({ maritalStatus: '', householdSize: '4' })).row.fields.maritalStatus, 'נשוי/אה');
+  });
+
+  test('empty holocaust survivor follows the budget; an explicit value wins', async () => {
+    assert.equal((await build({ holocaustSurvivor: '', budgetType: 'ניצולי שואה' })).row.fields.holocaustSurvivor, 'כן');
+    assert.equal((await build({ holocaustSurvivor: '', budgetType: 'משפחות' })).row.fields.holocaustSurvivor, 'לא');
+    assert.equal((await build({ holocaustSurvivor: 'לא', budgetType: 'ניצולי שואה' })).row.fields.holocaustSurvivor, 'לא');
+  });
+
+  test('a non-empty but invalid birth date still blocks the row', async () => {
+    const { row } = await build({ birthDate: '31/02/1990' });
+    assert.equal(row.status, ROW_STATUS.INVALID);
   });
 });

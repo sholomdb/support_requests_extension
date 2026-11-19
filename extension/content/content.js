@@ -1247,13 +1247,42 @@ async function fillMutavIdLookup(fields, selectors, delayMs, idLookupWaitMs) {
   return buildStepResult(1, 'MUTAV', results, { phase: 'id' });
 }
 
+/** The value a site input currently holds - only from a real input/select (never a wrapper's
+ * textContent, which would pick up the field's label and look "filled"). '' when unknown. */
+function readSiteInputValue(selector) {
+  const parts = findMuiFieldInput(selector);
+  if (parts?.input) return String(parts.input.value ?? '').trim();
+  const root = querySelector(selector);
+  const sel = root?.matches('select') ? root : root?.querySelector('select');
+  if (sel && sel.value) return normalizeText(sel.options[sel.selectedIndex]?.text || sel.value);
+  return '';
+}
+
+/**
+ * For a field whose Excel cell was empty (fields.defaulted - see pipeline defaultedFieldsOf),
+ * an existing beneficiary's value that the ID lookup put on the page wins over our default.
+ * Returns a "kept" result when the site already has a value, else null (-> fill the default).
+ */
+function keepSiteValueIfDefaulted(fields, key, selector, label) {
+  if (!fields.defaulted?.[key] || !selector) return null;
+  const current = readSiteInputValue(selector);
+  if (!current) return null;
+  return { field: key, ok: true, skipped: true, reason: 'ערך קיים באתר נשמר (תא ריק באקסל)', value: current, label };
+}
+
 async function fillMutavDetails(fields, selectors, delayMs) {
   const s = selectors.step1 || {};
   const results = [];
 
-  results.push(await fillFieldIfEditable(s.lastName, fields.lastName, 'שם משפחה'));
+  results.push(
+    keepSiteValueIfDefaulted(fields, 'lastName', s.lastName, 'שם משפחה') ||
+      (await fillFieldIfEditable(s.lastName, fields.lastName, 'שם משפחה'))
+  );
   await sleep(delayMs);
-  results.push(await fillFieldIfEditable(s.firstName, fields.firstName, 'שם פרטי'));
+  results.push(
+    keepSiteValueIfDefaulted(fields, 'firstName', s.firstName, 'שם פרטי') ||
+      (await fillFieldIfEditable(s.firstName, fields.firstName, 'שם פרטי'))
+  );
   await sleep(delayMs);
 
   const mutavOk = await fillFormTitanDropdown(s.mutavKnowledge, ['כן', 'yes', 'Yes']);
@@ -1263,6 +1292,11 @@ async function fillMutavDetails(fields, selectors, delayMs) {
   const fillDropdowns = async (list) => {
     for (const [key, val, label] of list) {
       if (s[key] && val) {
+        const kept = keepSiteValueIfDefaulted(fields, key, s[key], label);
+        if (kept) {
+          results.push(kept);
+          continue;
+        }
         const ok = await fillFormTitanDropdown(s[key], dropdownPreferredTexts(val));
         results.push({ field: key, ok, label, value: val });
         await sleep(delayMs);
@@ -1280,7 +1314,10 @@ async function fillMutavDetails(fields, selectors, delayMs) {
 
   // ...then family size (מספר נפשות) right after marital status, per operator request.
   if (s.householdSize && fields.householdSize) {
-    results.push(await fillField(s.householdSize, fields.householdSize));
+    results.push(
+      keepSiteValueIfDefaulted(fields, 'householdSize', s.householdSize, 'נפשות') ||
+        (await fillField(s.householdSize, fields.householdSize))
+    );
     await sleep(delayMs);
   }
 
@@ -1292,12 +1329,14 @@ async function fillMutavDetails(fields, selectors, delayMs) {
   ]);
 
   results.push(
-    isMuiDateField(s.birthDate) ?
-      await fillMuiDateField(s.birthDate, fields.birthDate, 'תאריך לידה')
-    : await fillFieldIfEditable(s.birthDate, fields.birthDate, 'תאריך לידה')
+    keepSiteValueIfDefaulted(fields, 'birthDate', s.birthDate, 'תאריך לידה') ||
+      (isMuiDateField(s.birthDate) ?
+        await fillMuiDateField(s.birthDate, fields.birthDate, 'תאריך לידה')
+      : await fillFieldIfEditable(s.birthDate, fields.birthDate, 'תאריך לידה'))
   );
   await sleep(delayMs);
-  results.push(await fillFieldIfEditable(s.street, fields.street, 'רחוב'));
+  // רחוב is optional: an empty cell leaves the field as-is (an existing beneficiary keeps theirs).
+  results.push(await fillFieldIfEditable(s.street, fields.street, 'רחוב', true));
   await sleep(delayMs);
   results.push(await fillFieldIfEditable(s.building, fields.building, 'בית', true));
   await sleep(delayMs);

@@ -19,6 +19,27 @@ export const CONSTANTS = {
   shalamProgram: 'תכנית יתד',
 };
 
+/**
+ * Values used when the Excel cell is EMPTY (a non-empty but wrong value still goes through
+ * the normal fix/mapping/validation). Step-1 defaults are marked in `fields.defaulted`, and
+ * the content script keeps whatever the site already shows after the ID lookup (an existing
+ * beneficiary) and only types the default into a field the site left empty.
+ * maritalStatus/householdSize are inferred from each other first (see inference.js
+ * inferMaritalFromSize / effectiveHouseholdSize); these apply only when BOTH are empty.
+ */
+export const EMPTY_DEFAULTS = {
+  firstName: 'ישראל',
+  lastName: 'ישראלי',
+  gender: 'זכר',
+  sector: 'יהודי',
+  birthCountry: 'ישראל',
+  birthDate: '01/01/2000',
+  maritalStatus: 'נשוי/אה',
+  householdSize: '2',
+  item: 'מזון',
+  reason: 'עזרה',
+};
+
 /** Budget label index whose WhoHowM form has the extra שלמ "תכנית" dropdown. */
 export const SHALAM_LABEL_INDEX = 5;
 
