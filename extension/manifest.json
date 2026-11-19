@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "מזין בקשות סיוע",
   "description": "סיוע בהזנת בקשות סיוע מאקסל לאתר - עם מעקב יתרות לפי עיר",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel", "tabs"],
   "host_permissions": ["https://ifcjil.formtitan.com/*"],
   "background": {
@@ -26,19 +26,6 @@
       "matches": ["https://ifcjil.formtitan.com/*"],
       "js": ["content/content.js"],
       "run_at": "document_idle",
-      "all_frames": true
-    },
-    {
-      "matches": ["https://ifcjil.formtitan.com/*"],
-      "js": ["content/recorder-page.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://ifcjil.formtitan.com/*"],
-      "js": ["content/recorder-bridge.js"],
-      "run_at": "document_start",
       "all_frames": true
     }
   ],

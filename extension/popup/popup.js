@@ -157,12 +157,8 @@ async function init() {
   $('newRecordBtn').addEventListener('click', startNewRecord);
   $('loginBtn').addEventListener('click', loginToSite);
   $('readBalancesBtn').addEventListener('click', readBudgetSourceBalances);
-  $('apiRecToggleBtn').addEventListener('click', toggleApiRecording);
-  $('apiRecExportBtn').addEventListener('click', exportApiTrafficLog);
-  $('apiRecClearBtn').addEventListener('click', clearApiTrafficLog);
   $('apiTestBtn').addEventListener('click', testApiIdLookup);
   $('apiDryRunBtn').addEventListener('click', apiDryRun);
-  refreshApiRecorderUI();
   $('fillRequestBtn').addEventListener('click', () => runFillRequest());
   $('fillFromCurrentBtn').addEventListener('click', () => runFillFromCurrent());
   $('markSuccessBtn').addEventListener('click', () => overrideRequestStatus(STEP_STATUS.FILLED));
@@ -1200,56 +1196,12 @@ async function readBudgetSourceBalances() {
   }
 }
 
-/** Dev tool: records the site's own API calls (via recorder-page/bridge content scripts)
- * so the request/response formats can be reverse-engineered for a request-based flow. */
-async function refreshApiRecorderUI() {
-  const { apiRecording, apiTrafficLog } = await chrome.storage.local.get(['apiRecording', 'apiTrafficLog']);
-  $('apiRecToggleBtn').textContent = apiRecording ? '⏹ עצור הקלטה' : '⏺ התחל הקלטה';
-  $('apiRecToggleBtn').classList.toggle('danger', Boolean(apiRecording));
-  $('apiRecCount').textContent = `${(apiTrafficLog || []).length} קריאות`;
-}
-
-// Live-update the recorded-calls counter while the operator works on the site.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && ('apiTrafficLog' in changes || 'apiRecording' in changes)) {
-    refreshApiRecorderUI().catch(() => {});
-  }
-});
-
-async function toggleApiRecording() {
-  const { apiRecording } = await chrome.storage.local.get('apiRecording');
-  await chrome.storage.local.set({ apiRecording: !apiRecording });
-  if (!apiRecording) log('הקלטת רשת החלה – בצע את התהליך באתר (רענן את הדף אם היה פתוח)');
-  else log('הקלטת רשת נעצרה');
-  await refreshApiRecorderUI();
-}
-
-async function exportApiTrafficLog() {
-  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
-  if (!apiTrafficLog?.length) {
-    alert('אין קריאות מוקלטות');
-    return;
-  }
-  const blob = new Blob([JSON.stringify(apiTrafficLog, null, 1)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `api-traffic-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-async function clearApiTrafficLog() {
-  await chrome.storage.local.remove('apiTrafficLog');
-  await refreshApiRecorderUI();
-}
-
 /** Phase 0 spike: prove we can replay the harvested session headers by doing the ID lookup
  * ourselves (get/sfmapping) and showing what comes back. */
 async function testApiIdLookup() {
   const { ftAuth } = await chrome.storage.local.get('ftAuth');
   if (!ftAuth?.headers) {
-    log('אין כותרות אימות שנלכדו – פתח/רענן את אתר FormTitan ובצע פעולה כלשהי, ואז נסה שוב');
+    log('אין סשן API – התחבר דרך "🔑 התחבר" ונסה שוב');
     return;
   }
   const suggested = session?.requests?.[session.currentIndex]?.fields?.idNumber || '';
@@ -1275,20 +1227,6 @@ async function testApiIdLookup() {
   await persistLog();
 }
 
-/** Best-effort: pulls the logged-in account id (a123…, bound to guid ec14481b) out of any
- * recorded API traffic, so the dry run can resolve the budget-source/request-record too. It is
- * a session/city constant that never appears in a response, only in requests. */
-async function harvestAccountId() {
-  const { apiTrafficLog } = await chrome.storage.local.get('apiTrafficLog');
-  const guid = 'ec14481b-095b-44b8-875c-69e87aa34b2f';
-  for (const entry of apiTrafficLog || []) {
-    const body = typeof entry.requestBody === 'string' ? entry.requestBody : JSON.stringify(entry.requestBody || '');
-    const m = body.match(new RegExp(guid + '"\\s*:\\s*"(a[0-9A-Za-z]{5,})'));
-    if (m) return m[1];
-  }
-  return '';
-}
-
 /** Runs the headless GET/POST chain for the current request as a DRY RUN: discovers the field
  * ids from preview-page, resolves the SF ids via the read chain, and builds (without sending)
  * the pushes. The final submit (e361) is never fired. Proves the request-based flow end to end
@@ -1296,7 +1234,7 @@ async function harvestAccountId() {
 async function apiDryRun() {
   const { ftAuth } = await chrome.storage.local.get('ftAuth');
   if (!ftAuth?.headers) {
-    log('אין כותרות אימות שנלכדו – התחבר (🔑) או פתח/רענן את האתר, ואז נסה שוב');
+    log('אין סשן API – התחבר דרך "🔑 התחבר" ונסה שוב');
     return;
   }
   const request = session?.requests?.[session.currentIndex];
@@ -1305,7 +1243,9 @@ async function apiDryRun() {
     return;
   }
   const fetchApi = (req) => sendToContent({ type: 'API_FETCH', request: req });
-  const accountId = await harvestAccountId();
+  // The account id used to be scraped from recorded traffic; without the recorder the dry run
+  // skips the budget-source/request-record resolution (ft-flow notes it in the log).
+  const accountId = '';
   const ctx = { accountId, dateISO: new Date().toISOString().slice(0, 10) };
   log(`🧪 הרצת API יבשה לבקשה ${request.fields.idNumber}${accountId ? '' : ' (ללא accountId – מקור התקציב לא ייפתר)'}…`);
   try {

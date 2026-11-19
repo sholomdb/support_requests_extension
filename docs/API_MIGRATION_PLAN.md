@@ -27,7 +27,12 @@ label lookup misses, we **fail loudly** ("form changed - update label for X"), n
     `webprojects/get|push/sfmapping`, plus the per-step flows.
   - `shared/ft-auth.js` — supplies the session headers (see Auth).
 
-## Auth (reuse the recorder we already built)
+## Auth
+
+> **Update:** the in-extension API traffic recorder (recorder-page/bridge content scripts) has
+> been removed. Session headers now come only from the side panel's "🔑 התחבר" login
+> (`ft-login.js`), and the account id is no longer scraped from recorded traffic. The text
+> below is kept for history.
 Every call needs headers `kbgr8jmwl3r1ffbw3nilg`, `tc4gftmj5twjryy3bxcbqs3n`, `sfauthhash`,
 `fturl` (issued after SMS login; they expire). Instead of reimplementing login, the recorder
 mechanism persists the **latest seen** auth headers to storage; `ft-auth.js` reads them and
