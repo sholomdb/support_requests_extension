@@ -237,6 +237,14 @@ async function withAccountCity(rows, { quiet = false } = {}) {
   return filled;
 }
 
+/** The file's city as the operator mapped it (fields.citySearch), so login/display use the
+ * site's city even when the Excel spelling differs - there's no built-in alias table. */
+function resolvedFileCity(builtRows, parsed) {
+  const resolved = [...new Set(builtRows.map((r) => r.fields?.citySearch).filter(Boolean))];
+  if (!resolved.length) return { city: parsed.city, cities: parsed.cities };
+  return { city: resolved.length === 1 ? resolved[0] : null, cities: resolved };
+}
+
 /** Runs the fix+validate pipeline for every row using already-resolved mappings,
  * and merges with the previous session's progress when it's the same file. */
 async function finalizeUpload(parsed, fileId, previousSession) {
@@ -290,7 +298,7 @@ async function finalizeUpload(parsed, fileId, previousSession) {
   }
 
   const newSession = {
-    parsedFile: { ...parsed, fileId, rows: builtRows, remainingSnapshot },
+    parsedFile: { ...parsed, ...resolvedFileCity(builtRows, parsed), fileId, rows: builtRows, remainingSnapshot },
     requests,
     currentIndex: sameFile ? Math.min(previousSession.currentIndex ?? 0, requests.length - 1) : 0,
     log: previousSession?.log || [],
@@ -1325,7 +1333,12 @@ async function pickLoginCredentials() {
   let city = null;
   const fileCity = session?.parsedFile?.city;
   if (fileCity) {
-    city = configured.find((c) => normalizeCity(c) === normalizeCity(fileCity)) || null;
+    city =
+      configured.find(
+        (c) =>
+          normalizeCity(c) === normalizeCity(fileCity) ||
+          normalizeCity(settings.cities?.[c]?.siteSearch) === normalizeCity(fileCity)
+      ) || null;
   }
   if (!city) city = configured.length === 1 ? configured[0] : null;
   if (!city) {

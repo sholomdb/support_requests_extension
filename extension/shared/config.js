@@ -198,6 +198,8 @@ export function findCityLoginId(cities, cityName) {
   for (const [name, cfg] of Object.entries(cities)) {
     if (!cfg.loginId) continue;
     if (normalizeCity(name) === normalized) return cfg.loginId;
+    // The resolved (mapped) city is the site's search text, e.g. "ועד יהודי חברון".
+    if (cfg.siteSearch && normalizeCity(cfg.siteSearch) === normalized) return cfg.loginId;
     if (cfg.slug && cfg.slug === cityName.toLowerCase().trim()) return cfg.loginId;
   }
   return '';

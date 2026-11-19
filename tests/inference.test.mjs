@@ -2,11 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   inferFamilyClassification,
-  inferBirthCountry,
   routePhone,
   normalizeHolocaust,
-  inferMaritalStatus,
-  inferSector,
 } from '../extension/shared/inference.js';
 
 describe('inferFamilyClassification', () => {
@@ -35,21 +32,6 @@ describe('inferFamilyClassification', () => {
     // "ידוע/ה בציבור" - avoid marital strings containing those substrings here.)
     const result = inferFamilyClassification(2, 'סטטוס לא מוכר');
     assert.equal(result.needsInput, true);
-  });
-});
-
-describe('inferBirthCountry', () => {
-  test('exact hint match', () => {
-    assert.equal(inferBirthCountry('מרוקו').value, 'ארצות ערב');
-  });
-  test('already a valid site option passes through', () => {
-    assert.equal(inferBirthCountry('ישראל').value, 'ישראל');
-  });
-  test('unknown country needs input', () => {
-    assert.equal(inferBirthCountry('נרניה').needsInput, true);
-  });
-  test('empty value needs input', () => {
-    assert.equal(inferBirthCountry('').needsInput, true);
   });
 });
 
@@ -95,62 +77,6 @@ describe('routePhone', () => {
   });
   test('any number longer than 10 digits falls back to the placeholder', () => {
     assert.deepEqual(routePhone('031234567890'), { field: 'homePhone', value: '020000000' });
-  });
-});
-
-describe('inferMaritalStatus', () => {
-  test('grammar variants canonicalize to the site option', () => {
-    assert.equal(inferMaritalStatus('נשוי').value, 'נשוי/אה');
-    assert.equal(inferMaritalStatus('נשואה').value, 'נשוי/אה');
-    assert.equal(inferMaritalStatus('גרושה').value, 'גרוש/ה');
-    assert.equal(inferMaritalStatus('אלמן').value, 'אלמנ/ה');
-    assert.equal(inferMaritalStatus('אלמנה').value, 'אלמנ/ה');
-    assert.equal(inferMaritalStatus('רווקה').value, 'רווק/ה');
-    assert.equal(inferMaritalStatus('פרודה').value, 'פרוד/ה');
-    assert.equal(inferMaritalStatus('ידועה בציבור').value, 'ידוע/ה בציבור');
-  });
-  test('exact site options pass through', () => {
-    assert.equal(inferMaritalStatus('נשוי/אה').value, 'נשוי/אה');
-    assert.equal(inferMaritalStatus('רווק/ה').value, 'רווק/ה');
-  });
-  test('unknown or missing values need operator input', () => {
-    assert.equal(inferMaritalStatus('מסובך').needsInput, true);
-    assert.equal(inferMaritalStatus('').needsInput, true);
-  });
-  test('"לא ידוע" is NOT treated as ידוע/ה בציבור', () => {
-    assert.equal(inferMaritalStatus('לא ידוע').needsInput, true);
-    assert.equal(inferMaritalStatus('לא ידוע כלל').needsInput, true);
-  });
-});
-
-describe('inferSector', () => {
-  test('gender/spelling variants canonicalize to the site option', () => {
-    assert.equal(inferSector('יהודיה').value, 'יהודי');
-    assert.equal(inferSector('יהודית').value, 'יהודי');
-    assert.equal(inferSector('מוסלמית').value, 'מוסלמי');
-    assert.equal(inferSector('דרוזית').value, 'דרוזי');
-    assert.equal(inferSector('בדווי').value, 'בדואי');
-  });
-  test('נוצרי variants - including the נ/מ typo - resolve to נוצרי', () => {
-    assert.equal(inferSector('נוצרי').value, 'נוצרי');
-    assert.equal(inferSector('נוצריה').value, 'נוצרי');
-    assert.equal(inferSector('מוצרי').value, 'נוצרי');
-  });
-  test('exact site options pass through', () => {
-    assert.equal(inferSector('יהודי').value, 'יהודי');
-    assert.equal(inferSector('בדואי').value, 'בדואי');
-    assert.equal(inferSector('אחר/טרם נמסר').value, 'אחר/טרם נמסר');
-  });
-  test('אחר / טרם נמסר wording resolves to the catch-all option', () => {
-    assert.equal(inferSector('אחר').value, 'אחר/טרם נמסר');
-    assert.equal(inferSector('טרם נמסר').value, 'אחר/טרם נמסר');
-  });
-  test('unknown or missing values need operator input', () => {
-    assert.equal(inferSector('').needsInput, true);
-    assert.equal(inferSector('לא רלוונטי').needsInput, true);
-  });
-  test('"ערבי" is ambiguous and goes to the operator', () => {
-    assert.equal(inferSector('ערבי').needsInput, true);
   });
 });
 

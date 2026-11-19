@@ -27,7 +27,7 @@ function makeRawRow(overrides = {}) {
   return {
     rowIndex: 0,
     excelRow: 7,
-    budgetType: 'משפחות',
+    budgetType: 'סיוע חירום למשפחות',
     city: 'אלעד',
     idNumber: '123456782',
     lastName: 'כהן',
@@ -531,7 +531,7 @@ describe('item-in-budget validation + catalog max price', () => {
   test('a catalog item in its budget resolves with no prompt and gets its per-budget max price', async () => {
     const raw = makeRawRow({ item: 'מזון (סופר,מכולת,ספק מזון)' });
     const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
-    assert.ok(!queue.some((q) => q.type === MAP_TYPES.item)); // seeded -> no item prompt
+    assert.ok(!queue.some((q) => q.type === MAP_TYPES.item)); // exact catalog name -> no item prompt
     const row = buildRow(raw, resolved, FILE_ID);
     // No item error, and the per-budget max price is attached.
     assert.ok(!row.errors.some((e) => e.field === 'item'));
@@ -576,14 +576,10 @@ describe('collectMappingQueue', () => {
     assert.equal(itemEntries[0].affectedRowKeys.length, 3);
   });
 
-  test('a marital-status grammar variant resolves via inference, not a prompt', async () => {
+  test('a marital-status grammar variant is asked once (no built-in variant map)', async () => {
     const raw = makeRawRow({ maritalStatus: 'נשואה' });
-    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
-    assert.ok(!queue.some((q) => q.type === MAP_TYPES.maritalStatus));
-    const entry = resolved.get(
-      `${MAP_TYPES.maritalStatus}::${mappingKey(MAP_TYPES.maritalStatus, 'נשואה')}`
-    );
-    assert.equal(entry?.siteValue, 'נשוי/אה');
+    const { queue } = await collectMappingQueue([raw], FILE_ID, {});
+    assert.ok(queue.some((q) => q.type === MAP_TYPES.maritalStatus && q.excelValue === 'נשואה'));
   });
 
   test('an unrecognizable marital status queues an operator prompt with the site options', async () => {
@@ -594,12 +590,10 @@ describe('collectMappingQueue', () => {
     assert.ok(q.suggestions.includes('נשוי/אה'));
   });
 
-  test('a sector spelling variant resolves via inference, not a prompt', async () => {
+  test('a sector spelling variant is asked once (no built-in variant map)', async () => {
     const raw = makeRawRow({ sector: 'יהודיה' });
-    const { queue, resolved } = await collectMappingQueue([raw], FILE_ID, {});
-    assert.ok(!queue.some((q) => q.type === MAP_TYPES.sector));
-    const entry = resolved.get(`${MAP_TYPES.sector}::${mappingKey(MAP_TYPES.sector, 'יהודיה')}`);
-    assert.equal(entry?.siteValue, 'יהודי');
+    const { queue } = await collectMappingQueue([raw], FILE_ID, {});
+    assert.ok(queue.some((q) => q.type === MAP_TYPES.sector && q.excelValue === 'יהודיה'));
   });
 
   test('an unrecognizable sector queues an operator prompt with the site options', async () => {

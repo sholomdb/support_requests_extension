@@ -38,13 +38,10 @@ describe('normalizeIdNumber', () => {
 });
 
 describe('normalizeCity', () => {
-  test('maps known aliases to canonical name', () => {
-    assert.equal(normalizeCity('ביתר'), 'ביתר עילית');
-    assert.equal(normalizeCity('beytar'), 'ביתר עילית');
-    assert.equal(normalizeCity('מודיעין'), 'מודיעין עילית');
-  });
-  test('passes through unknown city names unchanged', () => {
-    assert.equal(normalizeCity('עיר לא ידועה'), 'עיר לא ידועה');
+  test('only normalizes whitespace - no built-in alias table', () => {
+    assert.equal(normalizeCity('  ביתר   עילית '), 'ביתר עילית');
+    assert.equal(normalizeCity('ביתר'), 'ביתר');
+    assert.equal(normalizeCity('beytar'), 'beytar');
   });
 });
 

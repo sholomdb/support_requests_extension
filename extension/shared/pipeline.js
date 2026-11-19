@@ -11,9 +11,6 @@ import { resolveMapping, mappingKey, MAP_TYPES, getSuggestions, getItemMaxPrice,
 import { isCatalogBudget, budgetHasItem, catalogMaxPrice } from './catalog-data.js';
 import {
   inferFamilyClassification,
-  inferBirthCountry,
-  inferMaritalStatus,
-  inferSector,
   routePhone,
   resolveHolocaust,
   effectiveHouseholdSize,
@@ -122,13 +119,10 @@ const FIELD_PIPELINE = [
   {
     key: 'sector',
     step: 1,
-    // Categorical: Excel carries gender/spelling variants (יהודיה, מוסלמית, בדווי…) that
-    // don't match the site's דרוזי/יהודי/מוסלמי/נוצרי/בדואי/אחר-טרם נמסר options. Known roots
-    // canonicalize automatically (inferFallback); anything else (e.g. "ערבי") prompts the
-    // operator once and is saved as a mapping.
+    // Categorical: an exact site option resolves as-is; any other wording is asked once and
+    // saved as a mapping (no built-in variant guessing).
     mapType: MAP_TYPES.sector,
     source: sectorSource,
-    inferFallback: (raw) => inferSector(sectorSource(raw)),
     validate: required('מגזר לא נפתר'),
   },
   { key: 'ministryFileExists', step: 1, fix: () => 'כן' },
@@ -136,13 +130,10 @@ const FIELD_PIPELINE = [
   {
     key: 'maritalStatus',
     step: 1,
-    // Categorical: Excel carries grammar variants (נשוי, גרושה, אלמן…) that don't match the
-    // site's נשוי/אה-style options. Known roots canonicalize automatically (inferFallback);
-    // anything else prompts the operator once and is saved as a mapping.
+    // Categorical: an exact site option resolves as-is; any other wording is asked once.
     mapType: MAP_TYPES.maritalStatus,
     // Empty cell: inferred from household size (1 -> רווק/ה, else נשוי/אה).
     source: maritalSource,
-    inferFallback: (raw) => inferMaritalStatus(maritalSource(raw)),
     validate: required('מצב משפחתי לא נפתר'),
   },
   // Empty/0/non-numeric: inferred from the resolved marital status (married -> 2, else 1).
@@ -177,16 +168,16 @@ const FIELD_PIPELINE = [
   {
     key: 'settlement',
     step: 1,
-    fix: (raw) => (isMatehBinyamin(raw.city) ? normalizeText(raw.settlement) : ''),
-    outputAs: (value, raw) => ({ settlement: value, needsSettlement: isMatehBinyamin(raw.city) }),
-    validate: (value, raw) => (isMatehBinyamin(raw.city) && !value ? 'ישוב חסר (מטה בנימין)' : null),
+    // Decided on the RESOLVED city (citySearch), so a mapped spelling of מטה בנימין counts.
+    fix: (raw, fields) => (isMatehBinyamin(fields.citySearch) ? normalizeText(raw.settlement) : ''),
+    outputAs: (value, raw, fields) => ({ settlement: value, needsSettlement: isMatehBinyamin(fields.citySearch) }),
+    validate: (value, raw, fields) => (isMatehBinyamin(fields.citySearch) && !value ? 'ישוב חסר (מטה בנימין)' : null),
   },
   {
     key: 'birthCountry',
     step: 1,
     mapType: MAP_TYPES.birthCountry,
     source: birthCountrySource,
-    inferFallback: (raw) => inferBirthCountry(birthCountrySource(raw)),
     validate: required('ארץ לידה לא נפתרה'),
   },
   {
@@ -274,7 +265,7 @@ function mapFields() {
 /**
  * Scans every row for unresolved categorical mappings and returns:
  *  - resolved: Map<"type::key", {siteValue, labelIndex, selector}> for everything
- *    already resolvable (saved mapping, seed, or inference fallback)
+ *    already resolvable (saved mapping, exact site option, or the familyClassification rule)
  *  - queue: one entry per unique unresolved (type, key) pair, with every affected
  *    row's key collected, ready to drive a batched operator-prompt UI.
  */
@@ -400,7 +391,7 @@ export function buildRow(rawRow, resolvedMap, fileId) {
     }
 
     const outputAs = field.outputAs || defaultOutputAs(field);
-    Object.assign(fields, outputAs(outputSource, rawRow));
+    Object.assign(fields, outputAs(outputSource, rawRow, fields));
 
     if (field.validate) {
       const reason = field.validate(value, rawRow, fields);
